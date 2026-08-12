@@ -977,6 +977,8 @@
       '<option value="random">Random from filters</option>' +
       '<option value="topic">Topic practice</option>' +
       '<option value="weak">Weak topics</option>' +
+      '<option value="mixed">Mixed practice</option>' +
+      '<option value="exam">Exam mode</option>' +
       '<option value="favourites">My saved questions</option></select>' +
       '<select id="p-course" aria-label="Course"></select>' +
       '<select id="p-topic" aria-label="Topic"></select>' +
@@ -1027,6 +1029,9 @@
         var timed = C.$("#p-timed").checked;
         var minutes = parseInt(C.$("#p-minutes").value, 10) || 15;
 
+        // exam mode: always timed, no per-question feedback, review at the end
+        var isExam = source === "exam";
+        if (isExam) { timed = true; }
         root.QB.practice.buildSet(filters, count, source, m).then(function (built) {
           if (!built.qids.length) {
             C.toast("No questions match those choices", "error");
@@ -1035,7 +1040,7 @@
           var s = root.QB.practice.startSession({
             qids: built.qids, records: built.records,
             name: C.titleCase(source) + (filters.topic ? " · " + (api.topicName(filters.topic) || "") : ""),
-            timed: timed, minutes: minutes, mode: source,
+            timed: timed, minutes: minutes, mode: isExam ? "exam" : source,
           });
           C.$("#p-session").innerHTML = "";
           root.QB.practice.renderSession(C.$("#p-session"), function () { practicePage(); });

@@ -410,6 +410,7 @@ async function main() {
   const fb = $("[id=p-feedback]");
   check("MCQ answer feedback appears", !!fb && !fb.hidden);
   check("feedback is correct/incorrect", fb && (fb.textContent.indexOf("Correct") !== -1 || fb.textContent.indexOf("answer is") !== -1));
+  check("mistake feedback is playful but kind", fb && (fb.textContent.indexOf("answer is") === -1 || /not quite|examiner|learning moment|onward|stronger|check the working|method/i.test(fb.textContent)));
   click($("[id=p-next]"));
   await sleep(200);
   // finish session quickly: answer whatever comes
@@ -425,6 +426,34 @@ async function main() {
   }
   await waitFor(() => $(".statcard .value"), 5000, "session summary");
   check("session summary rendered", !!$(".statcard .value"));
+
+  // ---- practice: exam mode ---------------------------------------------------
+  nav("#/practice");
+  await waitFor(() => $("[id=p-setup]"), 10000, "practice setup (exam)");
+  const srcSel = $("[id=p-source]");
+  srcSel.value = "exam";
+  const examCourse = $("[id=p-course]");
+  examCourse.value = "mathematics-advanced";
+  examCourse.dispatchEvent(new window.Event("change"));
+  const examType = $("[id=p-type]");
+  examType.value = "multiple_choice";
+  click($("[id=p-setup] button[type=submit]"));
+  await waitFor(() => $(".mcq-option"), 10000, "exam question");
+  check("exam mode: timed forced on", window.QB.practice.session && window.QB.practice.session.timed === true);
+  const examOpt = $$(".mcq-option")[0];
+  click(examOpt);
+  await sleep(200);
+  const examFb = $("[id=p-feedback]");
+  check("exam mode: answer recorded without reveal", examFb && examFb.textContent.indexOf("recorded") !== -1, examFb && examFb.textContent);
+  click($("[id=p-next]"));
+  await sleep(150);
+  // jump to the summary via the quit button
+  const quitBtn = $("[id=p-quit]");
+  if (quitBtn) click(quitBtn);
+  await waitFor(() => $(".exam-review"), 5000, "exam review");
+  check("exam mode: end-of-session review shown", !!$(".exam-review"));
+  const selfBtn = $('[data-self="right"]');
+  if (selfBtn) { click(selfBtn); await sleep(150); check("exam mode: self-mark records attempt", window.QB.store.analytics().total >= 1); }
 
   // ---- progress analytics ----------------------------------------------------
   nav("#/progress");
