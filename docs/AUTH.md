@@ -40,10 +40,15 @@ daily-question counter, analytics depth) and documents the enforcement point.
    window.QB_CONFIG.SUPABASE_ANON_KEY = "eyJ...";   // public anon key — safe to embed
    ```
 
-6. (Optional) make yourself an admin:
+6. (Optional) make yourself a moderator/admin. There is no separate moderator
+   login — sign in through the normal page, then promote the account in SQL:
    ```sql
    update profiles set is_admin = true where id = '<your-user-uuid>';
    ```
+   The Admin link then appears in the header. Review uploads at `#/admin`.
+   Approve / reject / request-changes call `approve_upload()` and
+   `moderate_upload()` (SECURITY DEFINER + `is_admin()`). Students cannot
+   set `is_admin` or change submission status themselves.
 7. Rebuild the site (`python scripts/build_site.py`) and deploy.
 
 The anon key is public by design — it only ever sees rows the RLS policies

@@ -21,7 +21,7 @@
       sets: [],                   // [{id, name, qids, filters}]
       submissions: [],            // [{id, name, sha, status, at, note}]
       reports: [],               // [{qid, reason, details, at}]
-      profile: { name: "", goal: 10, courses: [], yearLevel: null, onboarded: false },
+      profile: { name: "", goal: 10, courses: [], subjects: [], yearLevel: null, onboarded: false },
     };
   }
 
@@ -190,6 +190,43 @@
     };
   }
 
+  /* Study preferences: local profile first, then cached Supabase profile. */
+  function prefs() {
+    var s = load();
+    var local = s.profile || {};
+    var cached = null;
+    try { cached = JSON.parse(localStorage.getItem("qb_profile_cache")); } catch (e) { cached = null; }
+    var subjects = [];
+    var courses = [];
+    if (cached && cached.subjects && cached.subjects.length) subjects = cached.subjects.slice();
+    else if (local.subjects && local.subjects.length) subjects = local.subjects.slice();
+    if (cached && cached.courses && cached.courses.length) courses = cached.courses.slice();
+    else if (local.courses && local.courses.length) courses = local.courses.slice();
+    return {
+      subjects: subjects,
+      courses: courses,
+      onboarded: !!(local.onboarded || (cached && cached.onboarding_completed)),
+      yearLevel: (cached && cached.year_level) || local.yearLevel || null,
+      goal: (cached && cached.daily_goal) || local.goal || 10,
+      optOut: !!(cached && cached.opt_out_leaderboard),
+      displayName: (cached && cached.display_name) || local.name || "",
+      avatarUrl: (cached && cached.avatar_url) || null,
+    };
+  }
+
+  /* Restrict question queries to the student's selected subjects/courses
+   * unless the caller already set an explicit subject/course filter. */
+  function applyContentScope(filters) {
+    var f = Object.assign({}, filters || {});
+    var p = prefs();
+    if (f.course || f.subject || (f.subjects && f.subjects.length) || (f.courses && f.courses.length)) {
+      return f;
+    }
+    if (p.courses && p.courses.length) f.courses = p.courses.slice();
+    else if (p.subjects && p.subjects.length) f.subjects = p.subjects.slice();
+    return f;
+  }
+
   root.QB = root.QB || {};
   root.QB.store = {
     load: load, save: save, reset: reset, exportJSON: exportJSON, importJSON: importJSON,
@@ -198,5 +235,6 @@
     createSet: createSet, deleteSet: deleteSet, getSet: getSet,
     addSubmission: addSubmission, updateSubmission: updateSubmission,
     addReport: addReport, analytics: analytics, blank: blank,
+    prefs: prefs, applyContentScope: applyContentScope,
   };
 })();

@@ -62,11 +62,45 @@
     });
 
     /* refresh entitlement from backend when available -------------------- */
-    root.QB.auth.refreshEntitlement();
+    root.QB.auth.refreshEntitlement().then(function () {
+      if (root.QB.core && root.QB.core.navigate) {
+        /* refresh header only — do not remount the current page */
+        var path = (location.hash || "#/").slice(1);
+        var user = root.QB.auth.currentUser();
+        var ent = root.QB.auth.entitlement();
+        var account = root.QB.core.$("#nav-account");
+        if (account) {
+          if (user) { account.textContent = "My dashboard"; account.href = "#/dashboard"; }
+          else { account.textContent = "Sign in"; account.href = "#/login"; }
+        }
+        var settings = root.QB.core.$("#nav-settings");
+        if (settings) settings.hidden = !user;
+        var logout = root.QB.core.$("#nav-logout");
+        if (logout) logout.hidden = !user;
+        var menu = root.QB.core.$("#nav-user-menu");
+        if (menu) menu.hidden = !user;
+        var admin = root.QB.core.$("#nav-admin");
+        if (admin) admin.hidden = !(user && ent.isAdmin);
+      }
+    });
+
+    var logoutBtn = C.$("#nav-logout");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        root.QB.auth.signOut().then(function () {
+          C.toast("Signed out");
+          location.hash = "#/";
+          C.navigate();
+        });
+      });
+    }
 
     /* OAuth callback (?code=...) from Google/Apple sign-in ---------------- */
     root.QB.auth.handleOAuthCallback().then(function (handled) {
-      if (handled) root.QB.pages.dashboard();
+      if (!handled) return;
+      if (root.QB.auth.needsOnboarding()) location.hash = "#/onboarding";
+      else location.hash = "#/dashboard";
     });
 
     /* warm the meta cache so name resolvers work instantly ---------------- */
