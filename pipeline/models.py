@@ -45,6 +45,16 @@ class PageLayout:
         return self.lines
 
 
+def fallback_question_number(page_number: int) -> str:
+    """Stable, unique identifier for a whole-page fallback region.
+
+    Numeric question numbers stay untouched elsewhere (``\"1\"``, ``\"10\"``).
+    Fallback ids must not use ``?`` — later parsing/normalisation treats that
+    as a single token and collapses ``?p1`` / ``?p2`` to the same id.
+    """
+    return f"page{int(page_number)}"
+
+
 @dataclass
 class QuestionRegion:
     """A detected question (or solution block) with crop boundaries."""

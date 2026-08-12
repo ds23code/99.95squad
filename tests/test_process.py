@@ -83,6 +83,88 @@ def test_full_pipeline_on_sample_pdf(config, sample_pdf):
     db.close()
 
 
+def test_question_id_numeric_and_fallback_unique():
+    from pipeline.solutions import question_id
+    from pipeline.models import fallback_question_number
+
+    assert question_id("paper", "1") == "paper-q1"
+    assert question_id("paper", "10") == "paper-q10"
+    a = question_id("paper", fallback_question_number(1))
+    b = question_id("paper", fallback_question_number(2))
+    assert a != b
+    assert a == "paper-qpage1"
+    assert b == "paper-qpage2"
+
+
+def test_two_fallback_pages_insert_without_unique_conflict(config):
+    from pipeline.database import Database
+    from pipeline.models import fallback_question_number
+    from pipeline.solutions import question_id
+
+    db = Database(config.paths["database"])
+    db.init_schema()
+    paper_id = "scanned-2022-physics-test"
+    db.insert_paper({
+        "id": paper_id,
+        "filename": "Scanned_Physics_2022.pdf",
+        "file_path": "/tmp/scanned.pdf",
+        "sha256": "dd" * 32,
+        "display_name": "Scanned Physics",
+        "organisation": "Lakeside",
+        "year": 2022,
+        "paper_type": "trial",
+        "subject_id": "physics",
+        "course_id": "physics",
+        "year_level": 12,
+        "has_solutions": 0,
+        "page_count": 2,
+        "status": "processing",
+    })
+    for page in (1, 2):
+        qnum = fallback_question_number(page)
+        qid = question_id(paper_id, qnum)
+        db.upsert_question({
+            "id": qid,
+            "paper_id": paper_id,
+            "question_number": qnum,
+            "section": None,
+            "marks": None,
+            "subparts": None,
+            "page_start": page,
+            "page_end": page,
+            "image_path": f"/tmp/q{qnum}.png",
+            "image_width": 100,
+            "image_height": 200,
+            "ocr_raw": "",
+            "ocr_clean": "",
+            "ocr_engine": "none",
+            "ocr_confidence": 0.0,
+            "answer": None,
+            "answer_source": None,
+            "solution_image_path": None,
+            "solution_text": None,
+            "subject_id": "physics",
+            "course_id": "physics",
+            "year_level": 12,
+            "topic_id": None,
+            "subtopic_id": None,
+            "difficulty": 2.0,
+            "difficulty_reasoning": "fallback",
+            "question_type": "unknown",
+            "extraction_confidence": 0.2,
+            "classification_confidence": 0.2,
+            "status": "needs_review",
+            "review_flags": "[]",
+        })
+
+    qs = db.questions_for_paper(paper_id)
+    ids = [q["id"] for q in qs]
+    assert len(ids) == 2
+    assert len(set(ids)) == 2
+    assert "paper-q1" == question_id("paper", "1")
+    db.close()
+
+
 def test_skip_and_force(config, sample_pdf):
     from pipeline.database import Database
 

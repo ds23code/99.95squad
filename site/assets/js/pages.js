@@ -218,18 +218,17 @@
         : "") +
       '<div id="dash-body"><div class="boot-screen">' + C.spinner("Loading your progress…") + "</div></div>";
 
-    if (!hasBackend) { renderLocalFallback(app); return; }
+    if (!hasBackend || !user) { renderLocalFallback(app); return; }
 
     backend.getDashboard().then(function (d) {
       if (!C.alive(C.$("#dash-body"))) return;
       if (!d || !d.profile) {
-        C.$("#dash-body").innerHTML =
-          '<div class="notice">You need an account for progress tracking. <a href="#/login">Sign in</a></div>';
+        renderLocalFallback(app);
         return;
       }
       renderBackendDashboard(app, d);
-    }).catch(function (err) {
-      C.$("#dash-body").innerHTML = '<div class="error-banner">Could not load dashboard: ' + C.escapeHtml(err.message) + "</div>";
+    }).catch(function () {
+      renderLocalFallback(app);
     });
   }
 

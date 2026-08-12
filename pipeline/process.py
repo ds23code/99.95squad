@@ -26,7 +26,7 @@ from .database import Database
 from .detect import QuestionDetector
 from .difficulty import estimate_difficulty
 from .ingest import discover_pdfs, register_paper
-from .models import PaperRecord, QuestionRegion
+from .models import DetectionResult, PaperRecord, QuestionRegion, fallback_question_number
 from .ocr import clean_ocr, get_engine
 from .render import open_pdf, render_paper_pages, render_page_pil
 from .solutions import extract_solutions, question_id, split_inline_solution_crop

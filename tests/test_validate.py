@@ -91,6 +91,7 @@ def test_validation_suite_runs(config):
     scanned = by_name["Scanned_Physics_2022.pdf"]
     assert scanned["ok"] is True
     assert scanned["needs_review"] >= 1
+    assert scanned["detected_questions"] >= 2
 
     # physics/chemistry classification present
     chem = by_name["Chemistry_Trial_2023_wsols.pdf"]

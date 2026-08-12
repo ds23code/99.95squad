@@ -254,6 +254,15 @@ window.Element.prototype.scrollIntoView = function () {};
 window.confirm = () => true;
 window.prompt = (msg, def) => def || "reported by test";
 
+/* jsdom has no canvas implementation; core.pickImg probes WebP via
+ * canvas.toDataURL and must not throw / spam Not implemented errors. */
+try {
+  const proto = window.HTMLCanvasElement && window.HTMLCanvasElement.prototype;
+  if (proto) {
+    proto.toDataURL = function () { return "data:,"; };
+  }
+} catch (e) { /* ignore */ }
+
 /* image load failures (live mode): any <img> that 404s fires an error event */
 const failedImageUrls = [];
 if (liveBase) {
@@ -328,9 +337,16 @@ for (const s of scripts) {
   const file = s === "config.js" ? "config.js" : path.join("assets", "js", s);
   const code = fs.readFileSync(path.join(siteDir, file), "utf8");
   window.eval(code);
-  if (supabaseMock && s === "config.js") {
-    window.QB_CONFIG.SUPABASE_URL = "https://mock.supabase.co";
-    window.QB_CONFIG.SUPABASE_ANON_KEY = "mock-anon";
+  if (s === "config.js") {
+    if (supabaseMock) {
+      window.QB_CONFIG.SUPABASE_URL = "https://mock.supabase.co";
+      window.QB_CONFIG.SUPABASE_ANON_KEY = "mock-anon";
+    } else {
+      // Stub/live runs exercise device-local auth + dashboard. A real
+      // SUPABASE_URL in the built config.js must not hijack those flows.
+      window.QB_CONFIG.SUPABASE_URL = "";
+      window.QB_CONFIG.SUPABASE_ANON_KEY = "";
+    }
   }
 }
 
