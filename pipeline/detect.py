@@ -29,7 +29,7 @@ import pymupdf
 
 from .config import Config
 from .layout import column_streams, detect_columns, extract_layout, is_junk_line
-from .models import DetectionResult, PageLayout, QuestionRegion, TextLine
+from .models import DetectionResult, PageLayout, QuestionRegion, TextLine, fallback_question_number
 from .ocr.base import BaseOCREngine
 
 log = logging.getLogger(__name__)
@@ -468,7 +468,7 @@ class QuestionDetector:
                     # only fall back on real content pages, not title/cover pages
                     if len(body) >= 5:
                         q = QuestionRegion(
-                            number="?",
+                            number=fallback_question_number(layout.page_number),
                             page_start=layout.page_number,
                             page_end=layout.page_number,
                             y_top=body[0].y0,

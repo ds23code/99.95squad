@@ -106,3 +106,14 @@ def test_inline_solution_header():
 def test_confidence_low_for_bare_numbers():
     result = _run(["1. A thing\n2. Another thing\n3. Third thing"])
     assert all(q.confidence < 0.9 for q in result.questions)
+
+
+def test_whole_page_fallback_numbers_are_unique_per_page():
+    """Pages with content but no question markers must not share number '?'."""
+    filler = "\n".join(f"Line of content {i} about waves and kinematics." for i in range(8))
+    result = _run([filler, filler])
+    nums = [q.number for q in result.questions]
+    assert len(nums) >= 2
+    assert len(set(nums)) == len(nums), nums
+    assert all(n != "?" for n in nums)
+    assert "page1" in nums and "page2" in nums

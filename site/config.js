@@ -13,7 +13,7 @@
  * ==========================================================================*/
 window.QB_CONFIG = window.QB_CONFIG || {};
 
-window.QB_CONFIG.SUPABASE_URL = "https://ykmdjcsuhpwujaqnufhe.supabase.co/auth/v1/callback";        // e.g. "https://xxxx.supabase.co"
+window.QB_CONFIG.SUPABASE_URL = "https://ykmdjcsuhpwujaqnufhe.supabase.co";        // e.g. "https://xxxx.supabase.co"
 window.QB_CONFIG.SUPABASE_ANON_KEY = "sb_publishable_DGc8GnT1bzn9-OIzC3JvNw_s5Ga_dId";   // public anon key (safe to embed)
 
 /* Feature toggles --------------------------------------------------------- */
