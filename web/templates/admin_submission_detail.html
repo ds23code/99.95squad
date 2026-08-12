@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Submission {{ sub.id }} — 99.95squad admin</title>
+  <style>
+    :root { --ink:#0f1420; --muted:#5b6472; --line:#e7e9ef; --brand:#2f4bf7; --ok:#167a4c; --warn:#a8540f; --danger:#c23b3b; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; margin:0; color:var(--ink); background:#f7f8fa; }
+    .wrap { max-width:1100px; margin:0 auto; padding:0 20px 40px; }
+    h1 { font-size:24px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:18px; }
+    .warning-box { background:#fdf1e3; border-left:4px solid var(--warn); padding:12px 16px; border-radius:8px; margin-bottom:18px; }
+    .warning-box h4 { margin:0 0 8px; color:var(--warn); }
+    .pill { display:inline-block; border-radius:999px; padding:2px 9px; font-size:11px; font-weight:700; }
+    .pill.rejected, .pill.error { background:#fcecec; color:var(--danger); }
+    .pill.needs_review, .pill.needs_changes, .pill.duplicate, .pill.warn { background:#fdf1e3; color:var(--warn); }
+    .pill.approved, .pill.ok { background:#e7f5ee; color:var(--ok); }
+    .pill.pending, .pill.processing { background:#eef2ff; color:var(--brand); }
+    .meta { color:var(--muted); font-size:13px; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+    .btn { display:inline-block; background:var(--brand); color:#fff; border:0; border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer; text-decoration:none; }
+    .btn.ok { background:var(--ok); }
+    .btn.danger { background:var(--danger); }
+    .btn.ghost { background:transparent; border:1px solid var(--line); color:var(--ink); }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .q-item { border-bottom:1px solid var(--line); padding:12px 0; }
+    .q-item:last-child { border-bottom:0; }
+    .thumb { max-width:100%; max-height:240px; border:1px solid var(--line); border-radius:6px; margin-top:8px; }
+    details { margin-top:8px; }
+    pre { background:#f7f8fa; padding:10px; border-radius:6px; overflow-x:auto; font-size:12px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <p><a href="{{ url_for('admin_review.submissions_list') }}">← Back to submissions queue</a></p>
+  <h1>Submission: {{ sub.id }} <span class="pill {{ sub.status }}">{{ sub.status }}</span></h1>
+
+  {% if warnings %}
+  <div class="warning-box">
+    <h4>⚠️ Pre-approval Warnings ({{ warnings|length }})</h4>
+    <ul>
+      {% for w in warnings %}
+      <li><b>{{ w }}</b></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <div class="grid">
+    <div class="card">
+      <h3>Submission Metadata</h3>
+      <p><b>Filename:</b> {{ sub.filename }}</p>
+      <p><b>Uploader:</b> {{ sub.uploader or '—' }}</p>
+      <p><b>Upload Date:</b> {{ sub.created_at }}</p>
+      <p><b>File Size:</b> {{ sub.size_bytes or 0 }} bytes</p>
+      <p><b>SHA-256:</b> <code>{{ sub.sha256 }}</code></p>
+      <p><b>Processing Status:</b> {{ sub.status }}</p>
+      <p><b>Duplicate Status:</b> {{ sub.duplicate_type or 'none' }} {% if sub.duplicate_of %}(of {{ sub.duplicate_of }}){% endif %}</p>
+      <p><b>Review Notes:</b> {{ sub.review_notes or '—' }}</p>
+    </div>
+
+    <div class="card">
+      <h3>Paper Detection Metadata</h3>
+      {% if paper %}
+      <p><b>Detected Subject:</b> {{ paper.subject_id or '—' }}</p>
+      <p><b>Detected Course:</b> {{ paper.course_id or '—' }}</p>
+      <p><b>Detected Year:</b> {{ paper.year or '—' }}</p>
+      <p><b>Detected Paper Type:</b> {{ paper.paper_type or '—' }}</p>
+      <p><b>Question Count:</b> {{ questions|length }}</p>
+      <p><b>Solution Availability:</b> {% if paper.has_solutions %}Yes{% else %}No / Unknown{% endif %}</p>
+      <p><b>Review Status:</b> {{ paper.status }}</p>
+      {% else %}
+      <p class="meta">Paper not yet processed into the database.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Moderation Actions</h3>
+    <form method="post" action="{{ url_for('admin_review.submission_moderate', sub_id=sub.id) }}">
+      <div class="actions">
+        <a class="btn ghost" href="/images/papers/{{ sub.filename }}" target="_blank" id="btn-preview">[Preview]</a>
+        {% if paper %}
+        <a class="btn ghost" href="{{ url_for('admin_review.review_list') }}" id="btn-review-extraction">[Review extraction]</a>
+        {% endif %}
+        <button type="submit" name="action" value="approve" class="btn ok" id="btn-approve">[Approve]</button>
+        <button type="submit" name="action" value="reject" class="btn danger" id="btn-reject">[Reject]</button>
+        <button type="submit" name="action" value="needs_review" class="btn ghost" id="btn-request-changes">[Request changes / Needs review]</button>
+      </div>
+      <p style="margin-top:12px"><label class="meta">Reviewer notes:<br><input type="text" name="notes" placeholder="Optional notes for uploader..." style="width:100%;padding:6px;border:1px solid var(--line);border-radius:6px"></label></p>
+    </form>
+  </div>
+
+  {% if questions %}
+  <div class="card">
+    <h3>Detected Questions ({{ questions|length }}) — Inspect Images & OCR</h3>
+    {% for q in questions %}
+    <div class="q-item">
+      <p><b>Q{{ q.question_number }}</b> (ID: {{ q.id }})
+         · <span class="meta">{{ q.course_id or '?' }}</span>
+         · <span class="meta">extraction conf: {{ '%.0f%%' % ((q.extraction_confidence or 0)*100) }}</span>
+         · <span class="meta">OCR conf: {{ '%.0f%%' % ((q.ocr_confidence or 0)*100) }}</span>
+         {% if q.solution_image_path or q.solution_text %}
+         · <span class="pill ok">has solution</span>
+         {% else %}
+         · <span class="pill warn">missing solution</span>
+         {% endif %}
+      </p>
+      {% if q.image_path %}
+      <img class="thumb" src="/images/questions/{{ q.course_id }}/{{ q.paper_year }}/q{{ q.question_number }}.png" onerror="this.style.display='none'" alt="Question {{ q.question_number }}">
+      {% endif %}
+      {% if q.ocr_clean %}
+      <details>
+        <summary class="meta">Show OCR text</summary>
+        <pre>{{ q.ocr_clean }}</pre>
+      </details>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+</body>
+</html>

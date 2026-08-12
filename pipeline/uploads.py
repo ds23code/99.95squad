@@ -33,7 +33,7 @@ from .process import PipelineError, process_pdf
 
 log = logging.getLogger(__name__)
 
-STATUSES = ("pending", "processing", "approved", "rejected", "duplicate", "needs_review")
+STATUSES = ("pending", "processing", "approved", "rejected", "duplicate", "needs_review", "needs_changes")
 PREMIUM_GRANT_DAYS = 14
 
 
@@ -70,41 +70,140 @@ def register_upload(
     # 1. already a processed paper?
     existing_paper = db.get_paper_by_sha256(digest)
     if existing_paper:
+        upload_id = f"up-{uuid.uuid4().hex[:12]}"
+        db.upsert_upload(
+            {
+                "id": upload_id,
+                "sha256": digest,
+                "filename": pdf_path.name,
+                "file_path": str(pdf_path),
+                "size_bytes": pdf_path.stat().st_size,
+                "uploader": uploader,
+                "status": "duplicate",
+                "paper_id": existing_paper["id"],
+                "premium_granted": 0,
+                "review_notes": f"Exact SHA256 duplicate of approved paper {existing_paper['id']}",
+                "duplicate_of": existing_paper["id"],
+                "duplicate_type": "exact_sha256",
+            }
+        )
+        row = db.get_upload_by_sha256(digest)
+        db.record_audit_event(
+            actor=uploader,
+            action="duplicate_detected",
+            target_id=row["id"] if row else upload_id,
+            new_status="duplicate",
+            notes="exact sha256 match with approved paper",
+        )
         result = {
             "status": "duplicate",
             "reason": "already-in-library",
+            "duplicate_type": "exact_sha256",
             "paper": existing_paper,
+            "upload": row,
         }
     else:
         # 2. already submitted?
         existing_upload = db.get_upload_by_sha256(digest)
         if existing_upload:
+            db.record_audit_event(
+                actor=uploader,
+                action="duplicate_detected",
+                target_id=existing_upload["id"],
+                new_status="duplicate",
+                notes="exact sha256 match with existing upload",
+            )
             result = {
                 "status": "duplicate",
                 "reason": "already-submitted",
+                "duplicate_type": "exact_sha256",
                 "upload": existing_upload,
             }
         else:
+            from .ingest import FilenameParser
+
+            parser = FilenameParser(config)
+            meta = parser.parse(pdf_path.name)
+            matching_ids = []
+            if meta.get("course_id") and meta.get("year"):
+                matching_papers = db.find_papers_by_metadata(
+                    course_id=meta.get("course_id"),
+                    year=meta.get("year"),
+                    organisation=meta.get("organisation"),
+                    paper_type=meta.get("paper_type"),
+                )
+                if matching_papers:
+                    matching_ids.append(matching_papers[0]["id"])
+                else:
+                    for u in db.list_uploads():
+                        umeta = parser.parse(u["filename"])
+                        if (
+                            umeta.get("course_id") == meta.get("course_id")
+                            and umeta.get("year") == meta.get("year")
+                        ):
+                            matching_ids.append(u["id"])
+                            break
+
             upload_id = f"up-{uuid.uuid4().hex[:12]}"
-            db.upsert_upload(
-                {
-                    "id": upload_id,
-                    "sha256": digest,
-                    "filename": pdf_path.name,
-                    "file_path": str(pdf_path),
-                    "size_bytes": pdf_path.stat().st_size,
-                    "uploader": uploader,
-                    "status": "pending",
-                    "paper_id": None,
-                    "premium_granted": 0,
-                    "review_notes": None,
+            if matching_ids:
+                db.upsert_upload(
+                    {
+                        "id": upload_id,
+                        "sha256": digest,
+                        "filename": pdf_path.name,
+                        "file_path": str(pdf_path),
+                        "size_bytes": pdf_path.stat().st_size,
+                        "uploader": uploader,
+                        "status": "needs_review",
+                        "paper_id": None,
+                        "premium_granted": 0,
+                        "review_notes": f"Potential metadata duplicate of {matching_ids[0]} ({pdf_path.name})",
+                        "duplicate_of": matching_ids[0],
+                        "duplicate_type": "metadata",
+                    }
+                )
+                db.record_audit_event(
+                    actor=uploader,
+                    action="metadata_duplicate_detected",
+                    target_id=upload_id,
+                    new_status="needs_review",
+                    notes="matching metadata with existing paper",
+                )
+                result = {
+                    "status": "needs_review",
+                    "reason": "metadata-duplicate",
+                    "duplicate_type": "metadata",
+                    "duplicate_of": matching_ids[0],
+                    "upload": db.get_upload(upload_id),
                 }
-            )
-            result = {
-                "status": "new",
-                "reason": "queued",
-                "upload": db.get_upload(upload_id),
-            }
+            else:
+                db.upsert_upload(
+                    {
+                        "id": upload_id,
+                        "sha256": digest,
+                        "filename": pdf_path.name,
+                        "file_path": str(pdf_path),
+                        "size_bytes": pdf_path.stat().st_size,
+                        "uploader": uploader,
+                        "status": "pending",
+                        "paper_id": None,
+                        "premium_granted": 0,
+                        "review_notes": None,
+                        "duplicate_of": None,
+                        "duplicate_type": None,
+                    }
+                )
+                db.record_audit_event(
+                    actor=uploader,
+                    action="submission_created",
+                    target_id=upload_id,
+                    new_status="pending",
+                )
+                result = {
+                    "status": "new",
+                    "reason": "queued",
+                    "upload": db.get_upload(upload_id),
+                }
     if own_db:
         db.close()
     return result
@@ -164,6 +263,15 @@ def approve_upload(
         updated = db.grant_premium(upload["uploader"], PREMIUM_GRANT_DAYS)
         premium_until = updated["premium_until"] if updated else None
 
+    db.record_audit_event(
+        actor=reviewer,
+        action="submission_approved",
+        target_id=upload_id,
+        previous_status=upload["status"],
+        new_status="approved",
+        notes="submission approved and premium granted",
+    )
+
     return {
         "status": "approved",
         "paper_id": paper_id,
@@ -183,7 +291,52 @@ def set_upload_status(
         raise ValueError(f"invalid status {status!r}; expected one of {STATUSES}")
     db = Database(config.paths["database"])
     db.init_schema()
+    old = db.get_upload(upload_id)
+    old_status = old["status"] if old else None
     db.set_upload_status(upload_id, status, reviewer, notes)
+    db.record_audit_event(
+        actor=reviewer,
+        action=f"status_changed_{status}",
+        target_id=upload_id,
+        previous_status=old_status,
+        new_status=status,
+        notes=notes,
+    )
     result = db.get_upload(upload_id)
     db.close()
+    return result or {"error": "unknown upload"}
+
+
+def override_duplicate(
+    config: Config,
+    upload_id: str,
+    new_status: str = "pending",
+    reviewer: str = "admin",
+    db: Optional[Database] = None,
+) -> dict:
+    """Override a duplicate detection decision."""
+    if new_status not in STATUSES:
+        raise ValueError(f"invalid status {new_status!r}; expected one of {STATUSES}")
+    own_db = db is None
+    db = db or Database(config.paths["database"])
+    if own_db:
+        db.init_schema()
+    upload = db.get_upload(upload_id)
+    if upload is None:
+        if own_db:
+            db.close()
+        raise ValueError(f"unknown upload {upload_id}")
+    old_status = upload["status"]
+    db.set_upload_status(upload_id, new_status, reviewer, "duplicate overridden by admin")
+    db.record_audit_event(
+        actor=reviewer,
+        action="duplicate_overridden",
+        target_id=upload_id,
+        previous_status=old_status,
+        new_status=new_status,
+        notes="duplicate decision overridden by admin",
+    )
+    result = db.get_upload(upload_id)
+    if own_db:
+        db.close()
     return result or {"error": "unknown upload"}

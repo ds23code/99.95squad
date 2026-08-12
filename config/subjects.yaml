@@ -75,6 +75,18 @@ subjects:
         name: English Advanced
         aliases: [english advanced, eng adv, eal]
         year_level: 12
+      - id: english-standard
+        name: English Standard
+        aliases: [english standard, eng std, standard english]
+        year_level: 12
+      - id: english-extension-1
+        name: English Extension 1
+        aliases: [english extension 1, eng ext 1, e1]
+        year_level: 12
+      - id: english-eald
+        name: English EAL/D
+        aliases: [english eald, eald, esl]
+        year_level: 12
 
   - id: engineering
     name: Engineering Studies
@@ -92,6 +104,14 @@ subjects:
       - id: investigating-science
         name: Investigating Science
         aliases: [investigating science, inv sci]
+        year_level: 12
+      - id: earth-and-environmental-science
+        name: Earth and Environmental Science
+        aliases: [earth and environmental science, ees, earth science]
+        year_level: 12
+      - id: science-extension
+        name: Science Extension
+        aliases: [science extension, sci ext]
         year_level: 12
 
   - id: history

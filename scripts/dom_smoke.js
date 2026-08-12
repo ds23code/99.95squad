@@ -24,7 +24,8 @@ const fs = require("fs");
 const path = require("path");
 
 const siteDir = path.resolve(process.argv[2] || "site/_site");
-const jsdomPath = process.argv[3] || "jsdom";
+const jsdomArg = process.argv[3] || "jsdom";
+const jsdomPath = jsdomArg.startsWith("/") ? jsdomArg : (jsdomArg.startsWith(".") || jsdomArg.startsWith("node_modules") ? path.resolve(jsdomArg) : jsdomArg);
 const liveBase = process.argv[4] ? String(process.argv[4]).replace(/\/$/, "") + "/" : null;
 const supabaseMock = process.argv[5] === "--mock-supabase";
 const { JSDOM } = require(jsdomPath);
@@ -407,6 +408,35 @@ async function main() {
   check("favourite toggle works", $("[id=q-fav]").textContent.indexOf("Saved") !== -1);
   const recents = window.QB.store.load().recent;
   check("recently viewed recorded", recents.length >= 1 && recents[0] === qid);
+
+  // ---- question page UX: timer controls, correct/incorrect/skipped & persistence ----
+  const timerToggle = $("[id=q-timer-toggle]");
+  const timerReset = $("[id=q-timer-reset]");
+  check("question timer toggle button present", !!timerToggle);
+  check("question timer reset button present", !!timerReset);
+  if (timerToggle) {
+    click(timerToggle);
+    await sleep(80);
+    check("question timer pauses correctly", timerToggle.textContent === "Resume");
+    click(timerToggle);
+    await sleep(80);
+    check("question timer resumes correctly", timerToggle.textContent === "Pause");
+  }
+  const skipBtn = $("[id=q-skipped]");
+  check("skipped/unattempted mark button present", !!skipBtn);
+  const correctBtn = $("[id=q-correct]");
+  if (correctBtn) {
+    click(correctBtn);
+    await sleep(150);
+    check("marking question disables controls against double-submission", correctBtn.disabled === true);
+    const stored = window.QB.store.load().completed[qid];
+    check("mark result persists in local store", stored && stored.correct === true);
+    nav("#/browse");
+    await sleep(150);
+    nav("#/question/" + qid);
+    await waitFor(() => $("[id=q-prev-state]"), 5000, "previous state badge");
+    check("re-opening question shows student previous state", !!$("[id=q-prev-state]"));
+  }
 
   // ---- practice: MCQ session -----------------------------------------------
   nav("#/practice");

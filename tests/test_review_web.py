@@ -83,3 +83,36 @@ def test_review_invalid_input(config, sample_pdf):
     client = app.test_client()
     resp = client.post(f"/admin/review/{qid}", data={"marks": "not-a-number", "action": "save"})
     assert resp.status_code == 400
+
+
+def test_review_submissions_dashboard(config, sample_pdf):
+    from web.app import create_app
+    from pipeline.uploads import register_upload
+
+    res = register_upload(config, sample_pdf, uploader="student-demo")
+    sub_id = res["upload"]["id"]
+
+    app = create_app(config)
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    # Get submissions list
+    resp = client.get("/admin/submissions")
+    assert resp.status_code == 200
+    assert b"Submissions Queue" in resp.data
+
+    # Get submission detail
+    resp = client.get(f"/admin/submissions/{sub_id}")
+    assert resp.status_code == 200
+    assert b"Submission Metadata" in resp.data
+    assert b"[Preview]" in resp.data
+    assert b"[Approve]" in resp.data
+    assert b"[Reject]" in resp.data
+
+    # Moderate submission
+    resp = client.post(
+        f"/admin/submissions/{sub_id}/moderate",
+        data={"action": "needs_review", "reviewer": "lead-mod", "notes": "check ocr"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200

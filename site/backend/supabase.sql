@@ -96,7 +96,7 @@ create table if not exists public.attempts (
   course_id   text,
   topic_id    text,
   difficulty  numeric,
-  correct     boolean not null,
+  correct     boolean,
   seconds     integer not null default 0 check (seconds >= 0 and seconds < 86400),
   mode        text not null default 'practice'
               check (mode in ('practice', 'exam', 'mixed', 'topic', 'weak', 'set')),
@@ -708,10 +708,12 @@ create table if not exists public.upload_submissions (
   uploader      uuid references public.profiles(id),
   status        text not null default 'pending'
                 check (status in ('pending', 'processing', 'approved',
-                                  'rejected', 'duplicate', 'needs_review')),
+                                  'rejected', 'duplicate', 'needs_review', 'needs_changes')),
   paper_id      text,
   premium_granted boolean not null default false,
   review_notes  text,
+  duplicate_of  text,
+  duplicate_type text,
   created_at    timestamptz not null default now(),
   reviewed_at   timestamptz,
   reviewed_by   uuid references public.profiles(id)
@@ -754,7 +756,8 @@ create trigger trg_rate_limit_uploads before insert on public.upload_submissions
   for each row execute function public.rate_limit_uploads();
 
 alter table public.upload_submissions enable row level security;
-create policy "submission status readable" on public.upload_submissions for select using (true);
+create policy "submission status readable" on public.upload_submissions
+  for select using (auth.uid() = uploader or public.is_admin());
 create policy "submission insert" on public.upload_submissions
   for insert with check (auth.uid() = uploader);
 create policy "submission owner update" on public.upload_submissions
@@ -778,6 +781,59 @@ create policy "report insert" on public.problem_reports for insert with check (a
 create policy "report select" on public.problem_reports for select using (true);
 
 -- ============================================================================
+-- USER MARKS, AUDIT EVENTS & CURRICULUM
+-- ============================================================================
+create table if not exists public.user_marks (
+  id          bigint generated always as identity primary key,
+  user_id     uuid not null references public.profiles(id) on delete cascade,
+  question_id text not null,
+  kind        text not null check (kind in ('completed', 'flagged', 'favourite', 'correct', 'incorrect', 'skipped')),
+  created_at  timestamptz not null default now(),
+  unique(user_id, question_id, kind)
+);
+create index if not exists idx_user_marks_user on public.user_marks(user_id, kind);
+alter table public.user_marks enable row level security;
+create policy "own marks read" on public.user_marks for select using (auth.uid() = user_id);
+create policy "own marks write" on public.user_marks for all using (auth.uid() = user_id);
+
+create table if not exists public.audit_events (
+  id              uuid primary key default gen_random_uuid(),
+  actor           text not null,
+  action          text not null,
+  target_id       text not null,
+  previous_status text,
+  new_status      text,
+  notes           text,
+  created_at      timestamptz not null default now()
+);
+create index if not exists idx_audit_events_target on public.audit_events(target_id, created_at desc);
+alter table public.audit_events enable row level security;
+create policy "audit events readable" on public.audit_events
+  for select using (public.is_admin());
+
+create table if not exists public.curriculum_topics (
+  id          text primary key,
+  course_id   text not null,
+  year_level  integer default 12,
+  module      text,
+  name        text not null
+);
+create index if not exists idx_curriculum_topics_course on public.curriculum_topics(course_id);
+alter table public.curriculum_topics enable row level security;
+create policy "curriculum status readable" on public.curriculum_topics for select using (true);
+
+create table if not exists public.curriculum_outcomes (
+  id            text primary key,
+  topic_id      text not null references public.curriculum_topics(id) on delete cascade,
+  code          text not null,
+  description   text not null,
+  skill_concept text
+);
+create index if not exists idx_curriculum_outcomes_topic on public.curriculum_outcomes(topic_id);
+alter table public.curriculum_outcomes enable row level security;
+create policy "outcomes status readable" on public.curriculum_outcomes for select using (true);
+
+-- ============================================================================
 -- ADMIN + CONTRIBUTOR HELPERS
 -- ============================================================================
 create or replace function public.is_admin()
@@ -790,7 +846,7 @@ returns public.upload_submissions
 language plpgsql security definer set search_path = public as $$
 declare sub public.upload_submissions;
 begin
-  if not public.is_admin() and auth.uid() is null then
+  if not public.is_admin() then
     raise exception 'not authorized';
   end if;
   select * into sub from public.upload_submissions where id = submission_id;
@@ -818,7 +874,7 @@ language plpgsql security definer set search_path = public as $$
 declare sub public.upload_submissions;
 begin
   if not public.is_admin() then raise exception 'not authorized'; end if;
-  if new_status not in ('rejected', 'duplicate', 'needs_review') then
+  if new_status not in ('rejected', 'duplicate', 'needs_review', 'needs_changes', 'approved', 'pending') then
     raise exception 'invalid status';
   end if;
   update public.upload_submissions set status = new_status, reviewed_at = now()

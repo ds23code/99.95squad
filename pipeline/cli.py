@@ -81,6 +81,34 @@ def cmd_process(args: argparse.Namespace, config: Config) -> int:
     return 0 if not result["failed"] else 1
 
 
+def cmd_import_dir(args: argparse.Namespace, config: Config) -> int:
+    from .process import import_directory
+
+    target = Path(args.directory)
+    if not target.exists():
+        print(f"error: {target} does not exist", file=sys.stderr)
+        return 2
+
+    counts = import_directory(
+        config,
+        target,
+        force=args.force,
+        resume=not args.no_resume,
+        limit=args.limit,
+        pattern=args.pattern,
+        retry_failed=args.retry_failed,
+    )
+    print("Import directory summary:")
+    print(f"  discovered:   {counts['discovered']}")
+    print(f"  duplicates:   {counts['duplicates']}")
+    print(f"  queued:       {counts['queued']}")
+    print(f"  processing:   {counts['processing']}")
+    print(f"  completed:    {counts['completed']}")
+    print(f"  failed:       {counts['failed']}")
+    print(f"  needs_review: {counts['needs_review']}")
+    return 1 if counts["failed"] > 0 and counts["completed"] == 0 else 0
+
+
 def cmd_review(args: argparse.Namespace, config: Config) -> int:
     from .database import Database
     from .review import apply_review, interactive_review, review_queue
@@ -373,6 +401,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=None, help="process at most N PDFs")
     p.add_argument("--pattern", default=None, help="only files matching this glob")
     p.set_defaults(func=cmd_process)
+
+    p = sub.add_parser("import-dir", help="robust batch import for existing PDFs")
+    p.add_argument("directory", help="path to directory of PDFs")
+    p.add_argument("--force", action="store_true", help="reprocess even if already done")
+    p.add_argument("--no-resume", action="store_true", help="do not skip complete papers")
+    p.add_argument("--limit", type=int, default=None, help="process at most N PDFs")
+    p.add_argument("--pattern", default=None, help="only files matching this glob")
+    p.add_argument("--retry-failed", action="store_true", help="retry previously failed papers")
+    p.set_defaults(func=cmd_import_dir)
 
     p = sub.add_parser("review", help="human review workflow")
     p.add_argument("--list", action="store_true", help="print the review queue")

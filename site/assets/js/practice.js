@@ -95,7 +95,7 @@
     if (!session || session.finished) return;
     var rec = currentRecord();
     if (!rec) return;
-    pushResult(rec, !!correct);
+    pushResult(rec, correct === null ? null : !!correct);
   }
 
   function pushResult(rec, correct) {
@@ -139,10 +139,12 @@
 
   function summary() {
     var n = session.results.length;
-    var correct = session.results.filter(function (r) { return r.correct; }).length;
+    var attempted = session.results.filter(function (r) { return r.correct !== null && r.correct !== undefined; }).length;
+    var correct = session.results.filter(function (r) { return r.correct === true; }).length;
+    var incorrect = session.results.filter(function (r) { return r.correct === false; }).length;
     return {
-      attempted: n, correct: correct, incorrect: n - correct,
-      accuracy: n ? Math.round((correct / n) * 100) : 0,
+      attempted: attempted, total: n, correct: correct, incorrect: incorrect,
+      accuracy: attempted ? Math.round((correct / attempted) * 100) : 0,
       seconds: session.seconds, name: session.name,
     };
   }
@@ -152,11 +154,20 @@
     var el = C.$("#p-timer", container);
     if (!session.timer && session.timed) {
       session.timer = setInterval(function () {
-        session.seconds++;
-        if (el) el.textContent = C.fmtTime(session.seconds);
-        if (session.timed && session.minutes && session.seconds >= session.minutes * 60) finish();
+        if (!session.paused) {
+          session.seconds++;
+          if (el) el.textContent = C.fmtTime(session.seconds);
+          if (session.timed && session.minutes && session.seconds >= session.minutes * 60) finish();
+        }
         if (session.finished && session.timer) { clearInterval(session.timer); session.timer = null; }
       }, 1000);
+    }
+    var toggleBtn = C.$("#p-timer-toggle", container);
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", function () {
+        session.paused = !session.paused;
+        toggleBtn.textContent = session.paused ? "Resume" : "Pause";
+      });
     }
   }
 
@@ -173,8 +184,9 @@
       '<div class="practice-toolbar">' +
       '<div class="bar" style="flex:1"><span style="width:' + prog + '%"></span></div>' +
       '<span class="fine">Question ' + (session.idx + 1) + " of " + session.totalQuestions + "</span>" +
-      '<span class="timer-display" id="p-timer" aria-live="off">' + C.fmtTime(session.seconds) + "</span>" +
-      '<button class="btn ghost sm" id="p-quit">End session</button>' +
+      '<span class="timer-display" id="p-timer" role="timer" aria-live="off">' + C.fmtTime(session.seconds) + "</span>" +
+      '<button type="button" class="btn ghost sm" id="p-timer-toggle" aria-label="Pause or resume timer">' + (session.paused ? "Resume" : "Pause") + '</button>' +
+      '<button type="button" class="btn ghost sm" id="p-quit">End session</button>' +
       "</div>" +
       '<div class="card qcard" id="p-card">' +
       '<div class="qcard-head">' +
@@ -268,11 +280,13 @@
       "</div>" +
       '<div class="actions" style="margin-top:12px">' +
       (exam
-        ? '<button class="btn ok" id="p-got-right">I got it right</button>' +
-          '<button class="btn ghost" id="p-got-wrong">I got it wrong</button>' +
+        ? '<button type="button" class="btn ok" id="p-got-right" aria-label="Mark Correct">I got it right</button>' +
+          '<button type="button" class="btn ghost" id="p-got-wrong" aria-label="Mark Incorrect">I got it wrong</button>' +
+          '<button type="button" class="btn ghost" id="p-got-skipped" aria-label="Mark Unattempted or Skipped">─ Skipped</button>' +
           '<span class="fine muted">Self-marked in exam mode — no hints until you check.</span>'
-        : '<button class="btn ok" id="p-got-right">I got it right</button>' +
-          '<button class="btn ghost" id="p-got-wrong">I got it wrong</button>') +
+        : '<button type="button" class="btn ok" id="p-got-right" aria-label="Mark Correct">I got it right</button>' +
+          '<button type="button" class="btn ghost" id="p-got-wrong" aria-label="Mark Incorrect">I got it wrong</button>' +
+          '<button type="button" class="btn ghost" id="p-got-skipped" aria-label="Mark Unattempted or Skipped">─ Skipped</button>') +
       "</div></div>" +
       '<div class="actions" style="margin-top:14px"><button class="btn" id="p-next" hidden>Next question</button></div>';
 
@@ -287,6 +301,7 @@
     });
     C.$("#p-got-right", zone).addEventListener("click", function () { selfMark(true); next(); renderSession(container, onDone); });
     C.$("#p-got-wrong", zone).addEventListener("click", function () { selfMark(false); next(); renderSession(container, onDone); });
+    C.$("#p-got-skipped", zone).addEventListener("click", function () { selfMark(null); next(); renderSession(container, onDone); });
     C.$("#p-next", zone).addEventListener("click", function () { next(); renderSession(container, onDone); });
   }
 

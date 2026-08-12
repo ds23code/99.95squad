@@ -34,6 +34,7 @@ def test_sql_file_exists_and_has_tables():
         "profiles", "attempts", "xp_events", "favourites", "comments",
         "comment_likes", "comment_reports", "moderation_words",
         "upload_submissions", "problem_reports",
+        "user_marks", "audit_events", "curriculum_topics", "curriculum_outcomes",
     ):
         assert re.search(rf"create table if not exists public\.{table}\b", CODE), table
 
@@ -55,10 +56,19 @@ def test_helper_functions_are_not_client_granted():
 
 
 def test_rls_enabled_on_user_tables():
-    for table in ("profiles", "attempts", "xp_events", "favourites", "comments", "upload_submissions"):
+    for table in ("profiles", "attempts", "xp_events", "favourites", "comments", "upload_submissions", "user_marks", "audit_events", "curriculum_topics", "curriculum_outcomes"):
         assert re.search(
             rf"alter table public\.{table} enable row level security", CODE
         ), table
+
+
+def test_admin_security_enforced():
+    appr = re.search(r"create or replace function public\.approve_upload.*?\$\$;", CODE, re.S).group(0)
+    mod = re.search(r"create or replace function public\.moderate_upload.*?\$\$;", CODE, re.S).group(0)
+    assert "if not public.is_admin() then" in appr
+    assert "if not public.is_admin() then" in mod
+    assert "auth.uid() is null" not in appr  # never bypass admin check for regular authed users
+    assert "user.email" not in CODE  # never rely on email check alone
 
 
 def test_users_cannot_update_profiles():

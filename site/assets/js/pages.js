@@ -284,7 +284,8 @@
       '<div class="grid cols-2" style="margin-top:16px">' +
       '<div class="card"><h3>Recommended practice</h3><div id="dash-recommended">' + C.spinner("Finding questions…") + "</div></div>" +
       '<div class="card"><h3>Recent activity</h3><div id="dash-recent-activity"></div></div>' +
-      "</div>";
+      "</div>" +
+      '<div class="card" style="margin-top:16px"><h3>Learning Insights</h3><div id="dash-insights"></div></div>';
 
     // calendar
     var calEl = C.$("#dash-cal");
@@ -313,6 +314,7 @@
 
     // recent activity
     recentActivity(C.$("#dash-recent-activity"));
+    renderLearningInsights(app.querySelector("#dash-insights"));
   }
 
   function stageBadge(stage) {
@@ -395,11 +397,86 @@
       '<a class="btn ghost" href="#/browse">Browse questions</a>' +
       '<a class="btn ghost" href="#/saved">Saved (' + favs.length + ")</a></div></div>" +
       '<div class="card"><h3>Recently viewed</h3><div id="dash-recent"></div></div>' +
-      "</div>";
+      "</div>" +
+      '<div class="card" style="margin-top:16px"><h3>Learning Insights</h3><div id="dash-insights"></div></div>';
     var recentEl = C.$("#dash-recent");
     recentEl.innerHTML = st.recent.length
       ? st.recent.slice(0, 5).map(function (id) { return '<p class="fine"><a href="#/question/' + encodeURIComponent(id) + '">View question</a></p>'; }).join("")
       : '<p class="muted fine">Questions you open will appear here.</p>';
+    renderLearningInsights(app.querySelector("#dash-insights"));
+  }
+
+  function renderLearningInsights(el) {
+    if (!el || !C.alive(el)) return;
+    var st = store.load();
+    api.metaOnce().then(function (m) {
+      if (!C.alive(el)) return;
+      var allTopics = m.topics || [];
+      var attemptedMap = {};
+      st.history.forEach(function (h) {
+        if (h.topic_id) {
+          attemptedMap[h.topic_id] = attemptedMap[h.topic_id] || { n: 0, correct: 0 };
+          attemptedMap[h.topic_id].n++;
+          if (h.correct === true) attemptedMap[h.topic_id].correct++;
+        }
+      });
+      var weakList = [];
+      var strongList = [];
+      var unpractisedList = [];
+      allTopics.forEach(function (t) {
+        if (!t.id) return;
+        var stat = attemptedMap[t.id];
+        if (!stat || stat.n === 0) {
+          unpractisedList.push(t);
+        } else {
+          var acc = Math.round((stat.correct / stat.n) * 100);
+          if (acc < 70) weakList.push({ t: t, acc: acc, n: stat.n });
+          else if (acc >= 80 && stat.n >= 2) strongList.push({ t: t, acc: acc, n: stat.n });
+        }
+      });
+
+      var recentMistakes = st.history.filter(function (h) { return h.correct === false; }).slice(-5).reverse();
+      var recTopic = weakList.length ? weakList[0] : (unpractisedList.length ? { t: unpractisedList[0], acc: 0, n: 0 } : null);
+      var recText = recTopic
+        ? 'Practise <b>' + C.escapeHtml(recTopic.t.name) + '</b> (' +
+          (recTopic.n > 0 ? 'accuracy ' + recTopic.acc + '% across ' + recTopic.n + ' attempts' : 'not yet practised') +
+          ') — targeted focus builds mastery.'
+        : 'Practise random questions across all topics to stay sharp.';
+
+      el.innerHTML =
+        '<div class="recommendation-box" style="margin-bottom:14px;padding:12px;background:var(--card-bg);border-left:4px solid var(--accent);border-radius:8px">' +
+        '<b>Recommended practice:</b> ' + recText +
+        (recTopic ? ' <a href="#/practice?topic=' + encodeURIComponent(recTopic.t.id) + '" class="btn sm" style="margin-left:8px">Start practice</a>' : '') +
+        '</div>' +
+        '<div class="grid cols-2">' +
+        '<div><h4>Your weakest areas</h4>' +
+        (weakList.length
+          ? weakList.slice(0, 4).map(function (w) {
+              return '<p class="fine" style="margin:4px 0"><a href="#/practice?topic=' + encodeURIComponent(w.t.id) + '">' +
+                C.escapeHtml(w.t.name) + '</a> <span class="muted">(' + w.acc + '% acc across ' + w.n + ' attempts)</span></p>';
+            }).join("")
+          : '<p class="muted fine">No weak areas identified yet.</p>') +
+        '<h4 style="margin-top:12px">Topics you\'re strong in</h4>' +
+        (strongList.length
+          ? strongList.slice(0, 4).map(function (s) {
+              return '<p class="fine" style="margin:4px 0">' + C.escapeHtml(s.t.name) + ' <span class="ok">(' + s.acc + '% acc)</span></p>';
+            }).join("")
+          : '<p class="muted fine">Keep practising to build strong topics.</p>') +
+        '</div>' +
+        '<div><h4>Topics you haven\'t practised</h4>' +
+        (unpractisedList.length
+          ? unpractisedList.slice(0, 5).map(function (u) {
+              return '<p class="fine" style="margin:4px 0"><a href="#/practice?topic=' + encodeURIComponent(u.id) + '">' + C.escapeHtml(u.name) + '</a></p>';
+            }).join("")
+          : '<p class="muted fine">You have attempted every topic!</p>') +
+        '<h4 style="margin-top:12px">Recent mistakes</h4>' +
+        (recentMistakes.length
+          ? recentMistakes.map(function (m) {
+              return '<p class="fine" style="margin:4px 0"><a href="#/question/' + encodeURIComponent(m.qid) + '">Question ' + C.escapeHtml(m.qid) + '</a> <span class="muted">(' + C.fmtDate(m.ts) + ')</span></p>';
+            }).join("")
+          : '<p class="muted fine">No recent mistakes.</p>') +
+        '</div></div>';
+    });
   }
 
   /* =============================================================== syllabus */
@@ -779,6 +856,13 @@
       var topic = rec.topic_id ? api.topicName(rec.topic_id) : null;
       var sub = rec.subtopic_id ? api.subtopicName(rec.subtopic_id) : null;
 
+      var prev = store.load().completed[id];
+      var prevHtml = "";
+      if (prev) {
+        var prevLabel = prev.correct === true ? "Correct ✓" : prev.correct === false ? "Incorrect ✗" : "Skipped ─";
+        prevHtml = '<div class="previous-state badge" id="q-prev-state" style="margin-top:10px">Previously marked: <b>' + prevLabel + '</b></div>';
+      }
+
       app.innerHTML =
         '<nav class="crumbs"><a href="#/browse">← Back to questions</a></nav>' +
         '<div class="card qcard" data-qid="' + C.escapeHtml(rec.id) + '">' +
@@ -795,12 +879,16 @@
         " · pages " + rec.pages[0] + (rec.pages[1] !== rec.pages[0] ? "–" + rec.pages[1] : "") + "</p>" +
         '<div id="q-image"></div>' +
         '<div class="q-timer-bar">' +
-        '<span class="timer-display" id="q-timer">00:00</span>' +
+        '<span class="timer-display" id="q-timer" role="timer" aria-live="off">00:00</span>' +
+        '<button type="button" class="btn ghost sm" id="q-timer-toggle" aria-label="Pause or resume timer">Pause</button>' +
+        '<button type="button" class="btn ghost sm" id="q-timer-reset" aria-label="Restart timer">Restart</button>' +
         '<span class="fine muted">time on this question</span></div>' +
-        '<div class="qcard-actions">' +
-        '<button class="btn ok" id="q-correct">✓ I got it right</button>' +
-        '<button class="btn ghost" id="q-wrong">✗ I got it wrong</button>' +
-        '<button class="btn ghost" id="q-fav">' + (store.isFavourite(id) ? "★ Saved" : "☆ Save") + "</button>" +
+        prevHtml +
+        '<div class="qcard-actions" role="group" aria-label="Mark your answer">' +
+        '<button type="button" class="btn ok" id="q-correct" aria-label="Mark Correct">✓ I got it right</button>' +
+        '<button type="button" class="btn ghost" id="q-wrong" aria-label="Mark Incorrect">✗ I got it wrong</button>' +
+        '<button type="button" class="btn ghost" id="q-skipped" aria-label="Mark Unattempted or Skipped">─ Unattempted / Skipped</button>' +
+        '<button type="button" class="btn ghost" id="q-fav">' + (store.isFavourite(id) ? "★ Saved" : "☆ Save") + "</button>" +
         '<a class="btn ghost" href="#/report/' + encodeURIComponent(id) + '">Report</a>' +
         "</div>" +
         '<div id="q-xp-feedback" class="xp-feedback" hidden></div>' +
@@ -850,11 +938,32 @@
 
       // ---- per-question timer -----------------------------------------------
       var qStart = Date.now();
+      var qElapsed = 0;
+      var qPaused = false;
       var qTimer = C.$("#q-timer");
+      var qTimerToggle = C.$("#q-timer-toggle");
+      var qTimerReset = C.$("#q-timer-reset");
       var qTimerTick = setInterval(function () {
         if (!C.alive(qTimer)) { clearInterval(qTimerTick); return; }
-        qTimer.textContent = C.fmtTime(Math.round((Date.now() - qStart) / 1000));
+        if (!qPaused) {
+          qElapsed = Math.round((Date.now() - qStart) / 1000);
+          qTimer.textContent = C.fmtTime(qElapsed);
+        }
       }, 1000);
+      if (qTimerToggle) {
+        qTimerToggle.addEventListener("click", function () {
+          qPaused = !qPaused;
+          if (!qPaused) { qStart = Date.now() - qElapsed * 1000; }
+          qTimerToggle.textContent = qPaused ? "Resume" : "Pause";
+        });
+      }
+      if (qTimerReset) {
+        qTimerReset.addEventListener("click", function () {
+          qStart = Date.now();
+          qElapsed = 0;
+          qTimer.textContent = "00:00";
+        });
+      }
 
       // ---- record attempt (server-side XP when backend enabled) -------------
       var recorded = false;
@@ -862,43 +971,57 @@
       function record(correct) {
         if (recorded) return;
         recorded = true;
-        clearInterval(qTimerTick);
-        var seconds = Math.round((Date.now() - qStart) / 1000);
+        C.$("#q-correct").disabled = true;
+        C.$("#q-wrong").disabled = true;
+        C.$("#q-skipped").disabled = true;
+        var seconds = qElapsed || Math.round((Date.now() - qStart) / 1000);
         // local store always records (device history)
         store.recordAttempt({ qid: id, correct: correct, mode: "practice", seconds: seconds, topic_id: rec.topic_id });
         var backend = root.QB.backend;
         var toastMsg;
-        if (!backend.enabled() || !backend.currentUser()) {
-          toastMsg = correct ? "Marked correct" : "Marked incorrect — check the solution";
+        if (correct === null) {
+          toastMsg = "Marked skipped / unattempted";
         } else {
-          backend.recordAttempt({
-            question_id: id, correct: correct, seconds: seconds,
-            mode: "practice", course_id: rec.course_id, topic_id: rec.topic_id,
-            difficulty: rec.difficulty,
-          }).then(function (res) {
-            if (!res) return;
-            var G = root.QB.gamification;
-            xpBox.hidden = false;
-            var text = correct
-              ? '<b>+' + res.xp_earned + " XP</b>" + (res.bonus ? ' <span class="fine">(includes ' + res.bonus + ' streak bonus)</span>' : "")
-              : "No XP this time — check the solution and try again";
-            xpBox.innerHTML = text +
-              '<span class="fine muted"> · Level ' + res.level + " · Streak " + res.streak + " days · Today " + res.xp_today + " XP</span>";
-            xpBox.classList.add(correct ? "xp-win" : "xp-loss");
-            C.toast(correct ? "+" + res.xp_earned + " XP earned" : "Incorrect — no XP", correct ? "ok" : "");
-          }).catch(function (err) {
-            C.toast(correct ? "Marked correct" : "Marked incorrect");
-            console.warn("record_attempt failed:", err && err.message);
-          });
+          toastMsg = correct ? "Marked correct" : "Marked incorrect — check the solution";
+        }
+        if (!backend.enabled() || !backend.currentUser()) {
+          xpBox.hidden = false;
+          xpBox.innerHTML = C.escapeHtml(toastMsg);
+          xpBox.className = "xp-feedback " + (correct === true ? "xp-win" : correct === false ? "xp-loss" : "xp-neutral");
+          C.toast(toastMsg, correct === true ? "ok" : "");
           return;
         }
-        xpBox.hidden = false;
-        xpBox.innerHTML = C.escapeHtml(toastMsg);
-        xpBox.classList.add(correct ? "xp-win" : "xp-loss");
-        C.toast(toastMsg, correct ? "ok" : "");
+        backend.recordAttempt({
+          question_id: id, correct: correct, seconds: seconds,
+          mode: "practice", course_id: rec.course_id, topic_id: rec.topic_id,
+          difficulty: rec.difficulty,
+        }).then(function (res) {
+          if (!res) return;
+          var G = root.QB.gamification;
+          xpBox.hidden = false;
+          var text;
+          if (correct === null) {
+            text = "<b>Unattempted / Skipped</b> — no XP earned this time";
+          } else if (correct) {
+            text = '<b>+' + res.xp_earned + " XP</b>" + (res.bonus ? ' <span class="fine">(includes ' + res.bonus + ' streak bonus)</span>' : "");
+          } else {
+            text = "No XP this time — check the solution and try again";
+          }
+          xpBox.innerHTML = text +
+            '<span class="fine muted"> · Level ' + res.level + " · Streak " + res.streak + " days · Today " + res.xp_today + " XP</span>";
+          xpBox.className = "xp-feedback " + (correct === true ? "xp-win" : correct === false ? "xp-loss" : "xp-neutral");
+          C.toast(correct === true ? "+" + res.xp_earned + " XP earned" : toastMsg, correct === true ? "ok" : "");
+        }).catch(function (err) {
+          xpBox.hidden = false;
+          xpBox.innerHTML = C.escapeHtml(toastMsg);
+          xpBox.className = "xp-feedback";
+          C.toast(toastMsg);
+          console.warn("record_attempt failed:", err && err.message);
+        });
       }
       C.$("#q-correct").addEventListener("click", function () { record(true); });
       C.$("#q-wrong").addEventListener("click", function () { record(false); });
+      C.$("#q-skipped").addEventListener("click", function () { record(null); });
 
       // ---- favourite (device + backend) -------------------------------------
       C.$("#q-fav").addEventListener("click", function () {
