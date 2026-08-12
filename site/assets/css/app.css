@@ -98,6 +98,31 @@ code, pre { font-family: var(--mono); font-size: 0.92em; }
 .main-nav a:hover { background: var(--bg); text-decoration: none; color: var(--ink); }
 .main-nav a.active { color: var(--brand); background: var(--brand-soft); }
 .top-actions { display: flex; gap: 8px; align-items: center; }
+.user-menu { position: relative; display: flex; align-items: center; }
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 10px; color: var(--ink-2);
+  border: 1px solid var(--line-strong); background: #fff;
+}
+.icon-btn:hover { background: var(--bg); color: var(--brand); text-decoration: none; }
+.user-menu-panel {
+  display: none; position: absolute; right: 0; top: calc(100% + 6px);
+  min-width: 160px; background: #fff; border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: var(--shadow-md); padding: 6px; z-index: 50;
+}
+.user-menu:hover .user-menu-panel,
+.user-menu:focus-within .user-menu-panel { display: flex; flex-direction: column; }
+.user-menu-panel a, .user-menu-panel button {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 13.5px;
+  color: var(--ink-2); cursor: pointer;
+}
+.user-menu-panel a:hover, .user-menu-panel button:hover { background: var(--bg); text-decoration: none; color: var(--ink); }
+.onboard-steps { display: flex; gap: 8px; list-style: none; padding: 0; margin: 0 0 16px; flex-wrap: wrap; }
+.onboard-steps li { font-size: 12px; color: var(--muted-2); padding: 4px 10px; border-radius: 999px; background: var(--bg); }
+.onboard-steps li.active { color: var(--brand-dark); background: var(--brand-soft); font-weight: 700; }
+.subject-grid { gap: 8px; }
+.xp-neutral { background: var(--bg); color: var(--ink-2); border: 1px solid var(--line); }
 
 .footer { border-top: 1px solid var(--line); margin-top: 56px; padding: 34px 0 18px; background: #fff; }
 .footer-inner { display: flex; justify-content: space-between; gap: 30px; flex-wrap: wrap; }

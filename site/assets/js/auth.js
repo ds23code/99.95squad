@@ -73,9 +73,16 @@
   }
   function sbSignOut() {
     var s = sessionGet();
+    var token = s && s.access_token;
+    var h = {
+      "apikey": cfg().SUPABASE_ANON_KEY,
+      "Content-Type": "application/json",
+    };
+    if (token) h["Authorization"] = "Bearer " + token;
     sessionSet(null);
+    try { localStorage.removeItem("qb_profile_cache"); } catch (e) {}
     if (!s) return Promise.resolve();
-    return fetch(cfg().SUPABASE_URL + "/auth/v1/logout", { method: "POST", headers: headers() }).catch(function () {});
+    return fetch(cfg().SUPABASE_URL + "/auth/v1/logout", { method: "POST", headers: h }).catch(function () {});
   }
   function sbProfile(userId) {
     if (!userId) return Promise.resolve(null);
@@ -216,9 +223,66 @@
   }
 
   function signOut() {
+    try { localStorage.removeItem("qb_profile_cache"); } catch (e) {}
     if (provider() === "supabase") return sbSignOut();
     localSetUser(null);
     return Promise.resolve();
+  }
+
+  function cachedProfile() {
+    try { return JSON.parse(localStorage.getItem("qb_profile_cache")) || null; } catch (e) { return null; }
+  }
+
+  function needsOnboarding() {
+    var user = currentUser();
+    if (!user) return false;
+    var local = root.QB.store ? root.QB.store.load().profile : null;
+    if (local && local.onboarded) return false;
+    var cached = cachedProfile();
+    if (cached && cached.id === user.id) return !cached.onboarding_completed;
+    return false;
+  }
+
+  function rpc(fn, body) {
+    return fetch(cfg().SUPABASE_URL + "/rest/v1/rpc/" + fn, {
+      method: "POST", headers: headers(),
+      body: JSON.stringify(body || {}),
+    }).then(function (res) {
+      if (!res.ok) return res.json().then(function (j) { throw new Error(j.message || j.msg || "HTTP " + res.status); });
+      return res.json();
+    });
+  }
+
+  function approveUpload(id) {
+    if (provider() !== "supabase" || !currentUser()) {
+      return updateSubmission(id, { status: "approved" });
+    }
+    return rpc("approve_upload", { submission_id: id });
+  }
+
+  function moderateUpload(id, status, notes) {
+    if (provider() !== "supabase" || !currentUser()) {
+      return updateSubmission(id, { status: status, note: notes || null });
+    }
+    return rpc("moderate_upload", { submission_id: id, new_status: status, p_notes: notes || null });
+  }
+
+  function listAuditEvents(targetId) {
+    if (provider() !== "supabase" || !currentUser()) return Promise.resolve([]);
+    var q = "/rest/v1/audit_events?select=*&order=created_at.desc";
+    if (targetId) q += "&target_id=eq." + encodeURIComponent(targetId);
+    return fetch(cfg().SUPABASE_URL + q, { headers: headers() })
+      .then(function (res) { return res.ok ? res.json() : []; })
+      .catch(function () { return []; });
+  }
+
+  function listProblemReports() {
+    if (provider() !== "supabase" || !currentUser()) {
+      return Promise.resolve(root.QB.store.load().reports || []);
+    }
+    return fetch(cfg().SUPABASE_URL + "/rest/v1/problem_reports?select=*&order=created_at.desc", {
+      headers: headers(),
+    }).then(function (res) { return res.ok ? res.json() : []; }).catch(function () { return []; });
   }
 
   /* submissions bridge: local queue or backend table */
@@ -320,8 +384,20 @@
   /* Settings update — routed through update_my_profile (server-side) so users
    * can never touch xp/level/premium/admin columns. */
   function updateProfile(fields) {
+    fields = fields || {};
+    var local = root.QB.store.load();
+    local.profile = Object.assign({}, local.profile, {
+      name: fields.display_name != null ? fields.display_name : local.profile.name,
+      goal: fields.daily_goal != null ? fields.daily_goal : local.profile.goal,
+      courses: fields.courses != null ? fields.courses : local.profile.courses,
+      subjects: fields.subjects != null ? fields.subjects : local.profile.subjects,
+      yearLevel: fields.year_level != null ? fields.year_level : local.profile.yearLevel,
+      onboarded: fields.onboarding_completed != null ? !!fields.onboarding_completed : local.profile.onboarded,
+    });
+    root.QB.store.save();
+
     if (provider() !== "supabase" || !currentUser()) {
-      return Promise.reject(new Error("Accounts are only editable with the Supabase backend enabled"));
+      return Promise.resolve(local.profile);
     }
     return fetch(cfg().SUPABASE_URL + "/rest/v1/rpc/update_my_profile", {
       method: "POST", headers: headers(),
@@ -330,10 +406,17 @@
         new_avatar_url: fields.avatar_url || null,
         new_daily_goal: fields.daily_goal != null ? fields.daily_goal : null,
         new_opt_out_leaderboard: fields.opt_out_leaderboard != null ? fields.opt_out_leaderboard : null,
+        new_subjects: fields.subjects || null,
+        new_courses: fields.courses || null,
+        new_year_level: fields.year_level != null ? fields.year_level : null,
+        new_onboarding_completed: fields.onboarding_completed != null ? fields.onboarding_completed : null,
       }),
     }).then(function (res) {
       if (!res.ok) return res.json().then(function (j) { throw new Error(j.message || "update failed"); });
       return res.json();
+    }).then(function (row) {
+      if (row) localStorage.setItem("qb_profile_cache", JSON.stringify(row));
+      return row;
     });
   }
 
@@ -343,7 +426,9 @@
     currentUser: currentUser, entitlement: entitlement, refreshEntitlement: refreshEntitlement,
     signUp: signUp, signIn: signIn, signOut: signOut,
     oauthLogin: oauthLogin, handleOAuthCallback: handleOAuthCallback,
-    updateProfile: updateProfile,
+    updateProfile: updateProfile, needsOnboarding: needsOnboarding, cachedProfile: cachedProfile,
+    approveUpload: approveUpload, moderateUpload: moderateUpload,
+    listAuditEvents: listAuditEvents, listProblemReports: listProblemReports,
     listSubmissions: listSubmissions, addSubmission: addSubmission,
     updateSubmission: updateSubmission, addReport: addReport,
   };

@@ -95,6 +95,7 @@
       pending: ["pending", "Pending review"], processing: ["processing", "Processing"],
       approved: ["approved", "Approved"], rejected: ["rejected", "Rejected"],
       duplicate: ["duplicate", "Duplicate"], needs_review: ["needs_review", "Needs review"],
+      needs_changes: ["needs_review", "Needs changes"],
     };
     var p = map[status] || ["pending", status];
     return '<span class="pill ' + p[0] + '">' + p[1] + "</span>";
@@ -194,7 +195,8 @@
       p.then(function (res) {
         if (!res.ok) { C.toast(res.error || "Something went wrong", "error"); return; }
         C.toast(isLogin ? "Signed in" : "Account created");
-        location.hash = "#/dashboard";
+        if (!isLogin || auth.needsOnboarding()) location.hash = "#/onboarding";
+        else location.hash = "#/dashboard";
       });
     });
   }
@@ -324,11 +326,18 @@
   function recommendQuestions(el, mastery, prof) {
     var weakTopics = (mastery || []).filter(function (m) { return m.stage === "practising"; })
       .map(function (m) { return m.topic_id; });
-    var profileCourses = prof.courses && prof.courses.length ? prof.courses : null;
+    var scoped = store.applyContentScope({ courses: prof.courses && prof.courses.length ? prof.courses : null });
     api.metaOnce().then(function (m) {
       if (!C.alive(el)) return;
-      var courses = profileCourses ||
-        m.courses.filter(function (c) { return c.n > 0; }).map(function (c) { return c.id; });
+      var courses;
+      if (scoped.courses && scoped.courses.length) courses = scoped.courses;
+      else if (scoped.subjects && scoped.subjects.length) {
+        courses = m.courses.filter(function (c) {
+          return scoped.subjects.indexOf(c.subject_id) !== -1 && c.n > 0;
+        }).map(function (c) { return c.id; });
+      } else {
+        courses = m.courses.filter(function (c) { return c.n > 0; }).map(function (c) { return c.id; });
+      }
       courses = courses.slice(0, 4);
       var recs = [];
       var chain = Promise.resolve();
@@ -506,7 +515,16 @@
         mastery = mastery || [];
         var byTopic = {};
         mastery.forEach(function (t) { byTopic[t.topic_id] = t; });
-        var topics = m.topics.filter(function (t) { return t.n > 0; });
+        var scoped = store.applyContentScope({});
+        var topics = m.topics.filter(function (t) {
+          if (!t.n) return false;
+          if (scoped.courses && scoped.courses.length) return scoped.courses.indexOf(t.course_id) !== -1;
+          if (scoped.subjects && scoped.subjects.length) {
+            var course = m.courses.filter(function (c) { return c.id === t.course_id; })[0];
+            return course && scoped.subjects.indexOf(course.subject_id) !== -1;
+          }
+          return true;
+        });
         var stats = { unseen: 0, learning: 0, practising: 0, strong: 0, mastered: 0 };
         topics.forEach(function (t) {
           var st = byTopic[t.id] ? byTopic[t.id].stage : "unseen";
@@ -548,7 +566,7 @@
     var backend = root.QB.backend;
     app.innerHTML =
       "<h1 class='page-title'>Leaderboard</h1>" +
-      '<p class="page-sub">Ranked by XP earned on correctly answered questions. You can opt out in <a href="#/profile">settings</a>.</p>' +
+      '<p class="page-sub">Ranked by XP earned on correctly answered questions. You can opt out in <a href="#/settings?tab=privacy">settings</a>.</p>' +
       '<div class="tabs" id="lb-tabs">' +
       '<a href="#/leaderboard?period=week" data-period="week" class="active">This week</a>' +
       '<a href="#/leaderboard?period=all" data-period="all">All time</a></div>' +
@@ -666,7 +684,18 @@
       C.$("#b-sort").value = params.get("sort") || "newest";
 
       var body = C.$("#filters-body");
-      body.innerHTML =
+      var pref = store.prefs();
+      var scopeNote = "";
+      if ((pref.subjects && pref.subjects.length) || (pref.courses && pref.courses.length)) {
+        var names = (pref.subjects || []).map(function (id) {
+          var s = m.subjects.filter(function (x) { return x.id === id; })[0];
+          return s ? s.name : id;
+        });
+        scopeNote = '<div class="notice" id="b-scope">Showing your subjects: <b>' +
+          C.escapeHtml(names.join(", ") || "selected courses") +
+          '</b>. <a href="#/settings?tab=subjects">Change in Settings</a></div>';
+      }
+      body.innerHTML = scopeNote +
         '<label>Subject<select id="f-subject">' + selectOptions(m.subjects.filter(function (s) { return s.n > 0; }), "id", "name", params.get("subject")) + "</select></label>" +
         '<label>Course<select id="f-course">' + selectOptions(m.courses.filter(function (c) { return c.n > 0; }), "id", "name", params.get("course")) + "</select></label>" +
         '<label>Topic<select id="f-topic">' + selectOptions(m.topics.filter(function (t) { return t.n > 0; }), "id", "name", params.get("topic")) + "</select></label>" +
@@ -768,11 +797,11 @@
         }
 
         var terms = q ? search.tokenize(q) : [];
-        var f2 = {
+        var f2 = store.applyContentScope({
           course: f.course, subject: f.subject, topic: f.topic, qtype: f.type,
           difficulty_min: f.difficulty_min, marks_min: f.marks_min,
           paper_year: f.paper_year, paper_type: f.paper_type,
-        };
+        });
 
         search.searchIds(terms, f2, m).then(function (res) {
           if (gen !== browseState.gen) return;
@@ -1125,8 +1154,15 @@
       "</div>";
 
     withMeta(function (m) {
+      var scoped = store.applyContentScope({});
+      var allowedCourses = m.courses.filter(function (c) {
+        if (c.n <= 0) return false;
+        if (scoped.courses && scoped.courses.length) return scoped.courses.indexOf(c.id) !== -1;
+        if (scoped.subjects && scoped.subjects.length) return scoped.subjects.indexOf(c.subject_id) !== -1;
+        return true;
+      });
       var courseSel = C.$("#p-course");
-      courseSel.innerHTML = selectOptions(m.courses.filter(function (c) { return c.n > 0; }), "id", "name", params.get("course"));
+      courseSel.innerHTML = selectOptions(allowedCourses.length ? allowedCourses : m.courses.filter(function (c) { return c.n > 0; }), "id", "name", params.get("course"));
       var topicSel = C.$("#p-topic");
       topicSel.innerHTML = selectOptions(m.topics.filter(function (t) { return t.n > 0; }), "id", "name", params.get("topic"));
       courseSel.addEventListener("change", function () {
@@ -1372,7 +1408,8 @@
           "Connect Supabase (set <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> in <code>config.js</code>) for real accounts — see docs/AUTH.md.</div>"
         : '<div class="notice ok">Connected to Supabase. Account and profile sync through the backend.</div>') +
       '<div class="actions">' +
-      (user ? '<button class="btn ghost" id="pr-signout">Sign out</button>' : '<a class="btn" href="#/login">Sign in</a>') +
+      (user ? '<button class="btn ghost" id="pr-signout">Log out</button>' : '<a class="btn" href="#/login">Sign in</a>') +
+      '<a class="btn ghost" href="#/settings">Settings</a>' +
       '<a class="btn ghost" href="#/upload">Contribute a paper</a></div></div>' +
       '<div class="card"><h3>Your contributions</h3><div id="pr-subs"><div class="skeleton" style="height:60px"></div></div></div>' +
       '<div class="card"><h3>Study setup</h3>' +
@@ -1405,7 +1442,7 @@
 
     var outBtn = C.$("#pr-signout");
     if (outBtn) outBtn.addEventListener("click", function () {
-      auth.signOut().then(function () { C.toast("Signed out"); profilePage(); });
+      auth.signOut().then(function () { C.toast("Signed out"); location.hash = "#/"; });
     });
     C.$("#pr-export").addEventListener("click", function () {
       var blob = new Blob([store.exportJSON()], { type: "application/json" });
@@ -1463,6 +1500,12 @@
             onboarded: true,
           });
           store.save();
+          auth.updateProfile({
+            daily_goal: s.profile.goal,
+            year_level: s.profile.yearLevel,
+            courses: courses,
+            onboarding_completed: true,
+          }).catch(function () {});
           C.toast("Study setup saved");
         });
       });
@@ -1608,44 +1651,65 @@
     var app = C.$("#app");
     C.setPageMeta("Moderation — 99.95squad", "");
     var ent = auth.entitlement();
+    if (auth.currentUser() && !ent.isAdmin && auth.provider() === "supabase") {
+      app.innerHTML = C.renderEmpty({
+        title: "Moderators only",
+        body: "This area is limited to accounts with is_admin set in the database. Sign in with a moderator account.",
+        action: '<a class="btn" href="#/dashboard">Back to dashboard</a>',
+      });
+      return;
+    }
+    var view = qs().get("view") || "queue";
     app.innerHTML =
-      "<h1 class='page-title'>Moderation queue</h1>" +
-      '<p class="page-sub">Review contributed papers. Nothing uploaded becomes public before approval.</p>' +
+      "<h1 class='page-title'>Moderator</h1>" +
+      '<p class="page-sub">Review student uploads. Approval, rejection and status changes go through secure server RPCs — students cannot change their own status.</p>' +
       (auth.provider() === "local"
         ? '<div class="notice">Device-local mode — you are managing submissions stored in this browser. ' +
-          "With a backend, moderators approve real submissions and the pipeline processes them (" +
-          "<code>python -m pipeline uploads approve &lt;id&gt;</code>). See docs/AUTH.md.</div>"
-        : "") +
-      '<div class="card"><h3>Uploaded papers</h3><div id="ad-list">' + C.spinner() + "</div></div>" +
+          "Promote a real moderator with <code>update profiles set is_admin = true where id = '&lt;uuid&gt;'</code> after connecting Supabase. See docs/AUTH.md.</div>"
+        : '<div class="notice ok">Signed in as a moderator. Actions call <code>approve_upload()</code> and <code>moderate_upload()</code>.</div>') +
+      '<div class="tabs">' +
+      [["queue", "Review uploads"], ["approved", "Approved"], ["rejected", "Rejected"], ["history", "Review history"]].map(function (t) {
+        return '<a href="#/admin?view=' + t[0] + '"' + (view === t[0] ? ' class="active"' : "") + ">" + t[1] + "</a>";
+      }).join("") + "</div>" +
+      '<div class="card"><div id="ad-list">' + C.spinner() + "</div></div>" +
+      '<div class="card" id="ad-detail-card" hidden><h3>Submission detail</h3><div id="ad-detail"></div></div>' +
       '<div class="card"><h3>Problem reports</h3><div id="ad-reports"></div></div>';
 
-    var statusFilter = { value: "" };
+    var statusFilter = { value: view === "approved" ? "approved" : view === "rejected" ? "rejected" : "" };
     auth.listSubmissions().then(function (subs) {
       var el = C.$("#ad-list");
       if (!subs || !subs.length) {
         el.innerHTML = C.renderEmpty({ title: "No submissions", body: "Student uploads will appear here for review." });
         return;
       }
+      var statuses = ["pending", "processing", "needs_review", "needs_changes", "approved", "rejected", "duplicate"];
       el.innerHTML =
         '<label class="fine">Filter: <select id="ad-filter" style="width:auto;margin-left:6px">' +
         '<option value="">All statuses</option>' +
-        ['pending', 'processing', 'approved', 'rejected', 'duplicate', 'needs_review'].map(function (s) {
-          return '<option value="' + s + '">' + C.titleCase(s) + "</option>";
+        statuses.map(function (s) {
+          return '<option value="' + s + '"' + (statusFilter.value === s ? " selected" : "") + ">" + C.titleCase(s.replace("_", " ")) + "</option>";
         }).join("") + "</select></label>" +
         '<div id="ad-rows"></div>';
       var rowsEl = C.$("#ad-rows");
       function renderRows() {
         var list = subs.filter(function (s) { return !statusFilter.value || s.status === statusFilter.value; });
         rowsEl.innerHTML = list.length
-          ? '<table class="table"><thead><tr><th>File</th><th>Uploader</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
+          ? '<table class="table"><thead><tr><th>File</th><th>Meta</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
             list.map(function (s) {
               return "<tr>" +
-                "<td>" + C.escapeHtml(s.filename || s.name || s.id) + '<br><span class="fine muted">' + C.escapeHtml(s.id) + "</span></td>" +
-                "<td>" + C.escapeHtml(s.uploader || "—") + "</td>" +
-                "<td>" + badgePill(s.status) + "</td>" +
+                "<td><button class='btn ghost sm' data-open='" + C.escapeHtml(s.id) + "'>" + C.escapeHtml(s.filename || s.name || s.id) + "</button>" +
+                '<br><span class="fine muted">' + C.escapeHtml(s.id) + "</span></td>" +
+                "<td class='fine'>" + C.escapeHtml(s.uploader || "—") +
+                (s.subject ? "<br>" + C.escapeHtml(s.subject) : "") +
+                (s.course ? " · " + C.escapeHtml(s.course) : "") +
+                (s.year ? " · " + C.escapeHtml(s.year) : "") +
+                (s.created_at ? "<br>" + C.fmtDate(s.created_at) : "") + "</td>" +
+                "<td>" + badgePill(s.status) +
+                (s.duplicate_of ? '<div class="fine muted">dup of ' + C.escapeHtml(s.duplicate_of) + "</div>" : "") + "</td>" +
                 "<td><div class='actions'>" +
                 '<button class="btn sm ok" data-act="approve" data-id="' + C.escapeHtml(s.id) + '">Approve</button>' +
                 '<button class="btn sm" data-act="duplicate" data-id="' + C.escapeHtml(s.id) + '">Duplicate</button>' +
+                '<button class="btn sm ghost" data-act="needs_changes" data-id="' + C.escapeHtml(s.id) + '">Request changes</button>' +
                 '<button class="btn sm ghost" data-act="needs_review" data-id="' + C.escapeHtml(s.id) + '">Needs review</button>' +
                 '<button class="btn sm danger" data-act="reject" data-id="' + C.escapeHtml(s.id) + '">Reject</button>' +
                 "</div></td></tr>";
@@ -1654,25 +1718,82 @@
         C.$$("[data-act]", rowsEl).forEach(function (btn) {
           btn.addEventListener("click", function () {
             var id = btn.dataset.id, act = btn.dataset.act;
-            auth.updateSubmission(id, { status: act }).then(function () {
+            var notes = prompt("Optional notes for this decision:", "") || "";
+            var op = act === "approve" ? auth.approveUpload(id) : auth.moderateUpload(id, act, notes);
+            op.then(function () {
               C.toast("Marked " + act);
               auth.listSubmissions().then(function (newSubs) { subs = newSubs; renderRows(); });
-            });
+            }).catch(function (err) { C.toast(err.message || "Action failed", "error"); });
           });
+        });
+        C.$$("[data-open]", rowsEl).forEach(function (btn) {
+          btn.addEventListener("click", function () { showDetail(btn.dataset.open); });
+        });
+      }
+      function showDetail(id) {
+        var s = subs.filter(function (x) { return String(x.id) === String(id); })[0];
+        var card = C.$("#ad-detail-card");
+        var box = C.$("#ad-detail");
+        if (!s || !card || !box) return;
+        card.hidden = false;
+        box.innerHTML =
+          "<p><b>" + C.escapeHtml(s.filename || s.name || s.id) + "</b> " + badgePill(s.status) + "</p>" +
+          '<p class="fine">Uploader: ' + C.escapeHtml(s.uploader || "—") +
+          " · submitted " + C.fmtDate(s.created_at || s.at) +
+          (s.size_bytes ? " · " + Math.round(s.size_bytes / 1024) + " KB" : "") + "</p>" +
+          '<p class="fine">Subject: ' + C.escapeHtml(s.subject || "—") +
+          " · Course: " + C.escapeHtml(s.course || "—") +
+          " · Year: " + C.escapeHtml(s.year || "—") +
+          " · Type: " + C.escapeHtml(s.paper_type || "—") + "</p>" +
+          (s.sha256 ? '<p class="fine muted">SHA-256: <code>' + C.escapeHtml(s.sha256) + "</code></p>" : "") +
+          (s.duplicate_of ? '<p class="fine">Duplicate of ' + C.escapeHtml(s.duplicate_of) +
+            (s.duplicate_type ? " (" + C.escapeHtml(s.duplicate_type) + ")" : "") + "</p>" : "") +
+          (s.note ? "<p>Notes: " + C.escapeHtml(s.note) + "</p>" : "") +
+          (s.storage_path ? '<p><a class="btn sm" href="' + C.escapeHtml(s.storage_path) + '" target="_blank" rel="noopener">Open uploaded file</a></p>'
+            : '<p class="muted fine">The PDF was hashed in the browser. Download the original from the student or the operator inbox — it is not stored in this static site.</p>') +
+          '<div id="ad-history"><p class="muted fine">Loading review history…</p></div>';
+        auth.listAuditEvents(String(s.id)).then(function (rows) {
+          var h = C.$("#ad-history");
+          if (!h) return;
+          if (!rows || !rows.length) { h.innerHTML = '<p class="muted fine">No audit events yet.</p>'; return; }
+          h.innerHTML = "<h4>Review history</h4>" + rows.map(function (r) {
+            return '<p class="fine">' + C.fmtDate(r.created_at) + " · " + C.escapeHtml(r.actor || "") +
+              " · " + C.escapeHtml(r.previous_status || "—") + " → " + C.escapeHtml(r.new_status || r.action) +
+              (r.notes ? " — " + C.escapeHtml(r.notes) : "") + "</p>";
+          }).join("");
         });
       }
       C.$("#ad-filter").addEventListener("change", function () { statusFilter.value = C.$("#ad-filter").value; renderRows(); });
       renderRows();
     });
 
-    var reports = store.load().reports;
-    C.$("#ad-reports").innerHTML = reports.length
-      ? reports.map(function (r) {
-          return '<p style="margin:6px 0;font-size:13.5px"><strong>' + C.escapeHtml(r.reason) + "</strong> · " +
-            C.escapeHtml(r.qid || "general") + ' <span class="fine muted">' + C.fmtDate(r.at) + "</span><br>" +
-            C.escapeHtml(r.details || "") + "</p>";
-        }).join("")
-      : '<p class="muted fine">No problem reports yet.</p>';
+    if (view === "history") {
+      auth.listAuditEvents().then(function (rows) {
+        var el = C.$("#ad-list");
+        if (!el) return;
+        el.innerHTML = rows && rows.length
+          ? '<table class="table"><thead><tr><th>When</th><th>Actor</th><th>Target</th><th>Change</th></tr></thead><tbody>' +
+            rows.map(function (r) {
+              return "<tr><td>" + C.fmtDate(r.created_at) + "</td><td>" + C.escapeHtml(r.actor || "") +
+                "</td><td class='fine'>" + C.escapeHtml(r.target_id || "") + "</td><td>" +
+                C.escapeHtml(r.previous_status || "—") + " → " + C.escapeHtml(r.new_status || r.action) +
+                (r.notes ? '<div class="fine muted">' + C.escapeHtml(r.notes) + "</div>" : "") + "</td></tr>";
+            }).join("") + "</tbody></table>"
+          : '<p class="muted fine">No review history yet.</p>';
+      });
+    }
+
+    auth.listProblemReports().then(function (reports) {
+      var el = C.$("#ad-reports");
+      if (!el) return;
+      el.innerHTML = reports && reports.length
+        ? reports.map(function (r) {
+            return '<p style="margin:6px 0;font-size:13.5px"><strong>' + C.escapeHtml(r.reason) + "</strong> · " +
+              C.escapeHtml(r.qid || r.question_id || "general") + ' <span class="fine muted">' + C.fmtDate(r.at || r.created_at) + "</span><br>" +
+              C.escapeHtml(r.details || "") + "</p>";
+          }).join("")
+        : '<p class="muted fine">No problem reports yet.</p>';
+    });
   }
 
   /* ================================================================== report */
@@ -1683,14 +1804,14 @@
       '<div style="max-width:560px;margin:24px auto">' +
       '<div class="card"><h2>Report a problem</h2>' +
       (qid ? '<p class="muted">Question: <code>' + C.escapeHtml(qid) + "</code></p>" : "") +
-      '<div class="form-row"><label for="r-reason">What\u2019s wrong?</label><select id="r-reason">' +
+      '<div class="form-row"><label for="r-reason">What\'s wrong?</label><select id="r-reason">' +
       '<option value="wrong-question">The question is cut off / cropped badly</option>' +
       '<option value="wrong-metadata">Wrong subject, topic or difficulty</option>' +
       '<option value="wrong-answer">The answer is wrong</option>' +
       '<option value="duplicate">Duplicate question</option>' +
       '<option value="copyright">Copyright concern</option>' +
       '<option value="other">Something else</option></select></div>' +
-      '<div class="form-row"><label for="r-details">Details (optional)</label><textarea id="r-details" placeholder="Tell us what\u2019s wrong…"></textarea></div>' +
+      '<div class="form-row"><label for="r-details">Details (optional)</label><textarea id="r-details" placeholder="Tell us what\'s wrong…"></textarea></div>' +
       '<button class="btn" id="r-submit">Send report</button></div></div>';
     C.$("#r-submit").addEventListener("click", function () {
       var reason = C.$("#r-reason").value;
@@ -1707,15 +1828,20 @@
     var app = C.$("#app");
     C.setPageMeta("Set up your account — 99.95squad", "");
     var profile = store.load().profile || {};
-    if (profile.onboarded) { location.hash = "#/dashboard"; return; }
+    if (profile.onboarded && !auth.needsOnboarding()) { location.hash = "#/dashboard"; return; }
 
     app.innerHTML =
-      '<div style="max-width:560px;margin:26px auto">' +
-      '<div class="card"><h2>Welcome — let\u2019s set you up</h2>' +
-      '<p class="muted" style="font-size:14px">Tell us what you\u2019re studying so your dashboard and recommendations fit you. You can change this any time in Settings.</p>' +
+      '<div style="max-width:640px;margin:26px auto">' +
+      '<div class="card onboard">' +
+      "<h2>Welcome — let's set you up</h2>" +
+      '<p class="muted" style="font-size:14px">A few quick choices so your practice feed matches what you actually study. You can change this later in Settings.</p>' +
+      '<ol class="onboard-steps" aria-hidden="true"><li class="active">Welcome</li><li>Subjects</li><li>Courses</li><li>Personalise</li></ol>' +
+      '<div class="form-row"><label>Subjects you study</label>' +
+      '<p class="field-hint">Pick every subject you want questions from. Others stay hidden until you add them.</p>' +
+      '<div id="o-subjects" class="chiprow subject-grid"></div></div>' +
+      '<div class="form-row"><label>Courses you study</label><div id="o-courses" class="chiprow"></div></div>' +
       '<div class="form-row"><label for="o-year">Year level</label>' +
       '<select id="o-year"><option value="">Select…</option><option value="11">Year 11</option><option value="12" selected>Year 12</option></select></div>' +
-      '<div class="form-row"><label>Courses you study</label><div id="o-courses" class="chiprow"></div></div>' +
       '<div class="form-row"><label for="o-goal">Daily goal (questions per day)</label>' +
       '<input type="number" id="o-goal" min="1" max="100" value="' + (profile.goal || 10) + '"></div>' +
       '<div class="form-row"><label for="o-name">Name (optional)</label>' +
@@ -1723,33 +1849,211 @@
       '<button class="btn block" id="o-save">Save and continue</button></div></div>';
 
     withMeta(function (m) {
+      var subjectsEl = C.$("#o-subjects");
       var coursesEl = C.$("#o-courses");
-      coursesEl.innerHTML = m.courses
-        .filter(function (c) { return c.n > 0; })
-        .map(function (c) {
+      var subjectList = m.subjects.slice().sort(function (a, b) {
+        return (b.n || 0) - (a.n || 0) || String(a.name).localeCompare(String(b.name));
+      });
+      subjectsEl.innerHTML = subjectList.map(function (s) {
+        return '<label class="chip" style="cursor:pointer"><input type="checkbox" value="' + C.escapeHtml(s.id) +
+          '" style="width:auto;margin-right:6px">' + C.escapeHtml(s.name) +
+          (s.n ? ' <span class="fine muted">(' + s.n + ")</span>" : "") + "</label>";
+      }).join("");
+      (profile.subjects || []).forEach(function (id) {
+        var box = subjectsEl.querySelector('input[value="' + id + '"]');
+        if (box) box.checked = true;
+      });
+
+      function renderCourses() {
+        var selected = [];
+        C.$$("#o-subjects input:checked").forEach(function (box) { selected.push(box.value); });
+        var list = m.courses.filter(function (c) {
+          if (c.n <= 0 && selected.length) return selected.indexOf(c.subject_id) !== -1;
+          return !selected.length || selected.indexOf(c.subject_id) !== -1;
+        });
+        // Always include courses with questions so the smoke-test checkbox exists.
+        if (!list.length) list = m.courses.filter(function (c) { return c.n > 0; });
+        coursesEl.innerHTML = list.map(function (c) {
           return '<label class="chip" style="cursor:pointer"><input type="checkbox" value="' + C.escapeHtml(c.id) +
-            '" style="width:auto;margin-right:6px">' + C.escapeHtml(c.name) + "</label>";
+            '" style="width:auto;margin-right:6px">' + C.escapeHtml(c.name) +
+            (c.n ? ' <span class="fine muted">(' + c.n + ")</span>" : "") + "</label>";
         }).join("");
-      var saved = profile.courses || [];
-      C.$$("#o-courses input").forEach(function (box) {
-        if (saved.indexOf(box.value) !== -1) box.checked = true;
+        var saved = profile.courses || [];
+        C.$$("#o-courses input").forEach(function (box) {
+          if (saved.indexOf(box.value) !== -1) box.checked = true;
+        });
+      }
+      renderCourses();
+      C.$$("#o-subjects input").forEach(function (box) {
+        box.addEventListener("change", renderCourses);
       });
 
       C.$("#o-save").addEventListener("click", function () {
+        var subjects = [];
+        C.$$("#o-subjects input:checked").forEach(function (box) { subjects.push(box.value); });
         var courses = [];
         C.$$("#o-courses input:checked").forEach(function (box) { courses.push(box.value); });
+        if (!courses.length && subjects.length) {
+          m.courses.forEach(function (c) {
+            if (subjects.indexOf(c.subject_id) !== -1) courses.push(c.id);
+          });
+        }
         var s = store.load();
+        var name = C.$("#o-name").value.trim() || s.profile.name || "";
+        var goal = Math.max(1, parseInt(C.$("#o-goal").value, 10) || 10);
+        var yearLevel = C.$("#o-year").value ? parseInt(C.$("#o-year").value, 10) : null;
         s.profile = {
-          name: C.$("#o-name").value.trim() || s.profile.name || "",
-          goal: Math.max(1, parseInt(C.$("#o-goal").value, 10) || 10),
-          yearLevel: C.$("#o-year").value ? parseInt(C.$("#o-year").value, 10) : null,
-          courses: courses,
-          onboarded: true,
+          name: name, goal: goal, yearLevel: yearLevel,
+          subjects: subjects, courses: courses, onboarded: true,
         };
         store.save();
+        auth.updateProfile({
+          display_name: name, daily_goal: goal, year_level: yearLevel,
+          subjects: subjects, courses: courses, onboarding_completed: true,
+        }).then(function () { return auth.refreshEntitlement(); }).catch(function () {});
         C.toast("All set — good luck!");
         location.hash = "#/dashboard";
       });
+    });
+  }
+
+  /* =============================================================== settings */
+  function settingsPage() {
+    var app = C.$("#app");
+    C.setPageMeta("Settings — 99.95squad", "");
+    var user = auth.currentUser();
+    var ent = auth.entitlement();
+    var tab = qs().get("tab") || "account";
+    var tabs = [
+      ["account", "Account"], ["subjects", "Subjects"],
+      ["preferences", "Preferences"], ["privacy", "Privacy"],
+    ];
+    app.innerHTML =
+      "<h1 class='page-title'>Settings</h1>" +
+      '<p class="page-sub">Manage your profile, subjects and privacy. Protected fields such as XP and admin status cannot be edited here.</p>' +
+      '<div class="tabs" id="st-tabs">' +
+      tabs.map(function (t) {
+        return '<a href="#/settings?tab=' + t[0] + '"' + (tab === t[0] ? ' class="active"' : "") + ">" + t[1] + "</a>";
+      }).join("") + "</div>" +
+      '<div id="st-body"></div>';
+
+    var body = C.$("#st-body");
+    var pref = store.prefs();
+
+    if (tab === "subjects") {
+      body.innerHTML =
+        '<div class="card"><h3>Selected subjects</h3>' +
+        '<p class="muted fine">Your practice feed, browse results, recommendations and random questions use this list.</p>' +
+        '<div id="st-subjects" class="chiprow subject-grid"></div>' +
+        '<div class="form-row" style="margin-top:16px"><label>Courses</label><div id="st-courses" class="chiprow"></div></div>' +
+        '<button class="btn" id="st-save-subjects">Save subjects</button></div>';
+      withMeta(function (m) {
+        var subEl = C.$("#st-subjects");
+        var courseEl = C.$("#st-courses");
+        if (!C.alive(subEl)) return;
+        subEl.innerHTML = m.subjects.map(function (s) {
+          return '<label class="chip" style="cursor:pointer"><input type="checkbox" value="' + C.escapeHtml(s.id) +
+            '" style="width:auto;margin-right:6px">' + C.escapeHtml(s.name) + "</label>";
+        }).join("");
+        (pref.subjects || []).forEach(function (id) {
+          var box = subEl.querySelector('input[value="' + id + '"]');
+          if (box) box.checked = true;
+        });
+        function renderCourses() {
+          var selected = [];
+          C.$$("#st-subjects input:checked").forEach(function (b) { selected.push(b.value); });
+          var list = m.courses.filter(function (c) {
+            return !selected.length || selected.indexOf(c.subject_id) !== -1;
+          });
+          courseEl.innerHTML = list.map(function (c) {
+            return '<label class="chip" style="cursor:pointer"><input type="checkbox" value="' + C.escapeHtml(c.id) +
+              '" style="width:auto;margin-right:6px">' + C.escapeHtml(c.name) + "</label>";
+          }).join("");
+          (pref.courses || []).forEach(function (id) {
+            var box = courseEl.querySelector('input[value="' + id + '"]');
+            if (box) box.checked = true;
+          });
+        }
+        renderCourses();
+        C.$$("#st-subjects input").forEach(function (b) { b.addEventListener("change", renderCourses); });
+        C.$("#st-save-subjects").addEventListener("click", function () {
+          var subjects = []; var courses = [];
+          C.$$("#st-subjects input:checked").forEach(function (b) { subjects.push(b.value); });
+          C.$$("#st-courses input:checked").forEach(function (b) { courses.push(b.value); });
+          if (!courses.length && subjects.length) {
+            m.courses.forEach(function (c) {
+              if (subjects.indexOf(c.subject_id) !== -1) courses.push(c.id);
+            });
+          }
+          auth.updateProfile({ subjects: subjects, courses: courses }).then(function () {
+            C.toast("Subjects saved — your question feed will update");
+            settingsPage();
+          }).catch(function (err) { C.toast(err.message || "Could not save", "error"); });
+        });
+      });
+      return;
+    }
+
+    if (tab === "preferences") {
+      body.innerHTML =
+        '<div class="card"><h3>Study preferences</h3>' +
+        '<div class="form-row"><label for="st-goal">Daily goal</label>' +
+        '<input type="number" id="st-goal" min="1" max="100" value="' + (pref.goal || 10) + '"></div>' +
+        '<div class="form-row"><label for="st-year">Year level</label><select id="st-year">' +
+        '<option value="">Not set</option><option value="11">Year 11</option><option value="12">Year 12</option></select></div>' +
+        '<button class="btn" id="st-save-pref">Save preferences</button></div>';
+      C.$("#st-year").value = pref.yearLevel ? String(pref.yearLevel) : "";
+      C.$("#st-save-pref").addEventListener("click", function () {
+        auth.updateProfile({
+          daily_goal: Math.max(1, parseInt(C.$("#st-goal").value, 10) || 10),
+          year_level: C.$("#st-year").value ? parseInt(C.$("#st-year").value, 10) : null,
+        }).then(function () { C.toast("Preferences saved"); }).catch(function (err) {
+          C.toast(err.message || "Could not save", "error");
+        });
+      });
+      return;
+    }
+
+    if (tab === "privacy") {
+      body.innerHTML =
+        '<div class="card"><h3>Privacy</h3>' +
+        '<label class="chip" style="cursor:pointer"><input type="checkbox" id="st-optout" style="width:auto;margin-right:6px"> Hide me from the leaderboard</label>' +
+        '<p class="muted fine" style="margin-top:10px">Your attempts, XP and profile entitlements stay private. Other students only see leaderboard rows you have not opted out of.</p>' +
+        '<button class="btn" id="st-save-privacy" style="margin-top:12px">Save privacy</button></div>' +
+        '<div class="card"><h3>Log out</h3><p class="muted fine">Sign out of this device and clear the cached session.</p>' +
+        '<button class="btn ghost" id="st-logout">Log out</button></div>';
+      C.$("#st-optout").checked = !!pref.optOut;
+      C.$("#st-save-privacy").addEventListener("click", function () {
+        auth.updateProfile({ opt_out_leaderboard: C.$("#st-optout").checked }).then(function () {
+          C.toast("Privacy saved");
+        }).catch(function (err) { C.toast(err.message || "Could not save", "error"); });
+      });
+      C.$("#st-logout").addEventListener("click", function () {
+        auth.signOut().then(function () { C.toast("Signed out"); location.hash = "#/"; });
+      });
+      return;
+    }
+
+    body.innerHTML =
+      '<div class="card"><h3>Account</h3>' +
+      (user
+        ? "<p><strong>" + C.escapeHtml(user.name || pref.displayName || "Student") + "</strong><br><span class='muted'>" + C.escapeHtml(user.email || "") + "</span></p>"
+        : '<p class="muted">Not signed in. <a href="#/login">Sign in</a></p>') +
+      '<p>' + badgePill(ent.isPremium ? "approved" : "pending") + " <strong>" + C.escapeHtml(C.titleCase(ent.tier || "free")) + "</strong></p>" +
+      '<div class="form-row"><label for="st-name">Display name</label>' +
+      '<input type="text" id="st-name" value="' + C.escapeHtml(pref.displayName || (user && user.name) || "") + '"></div>' +
+      '<button class="btn" id="st-save-account">Save profile</button>' +
+      '<a class="btn ghost" href="#/profile" style="margin-left:8px">Open full profile</a></div>' +
+      '<div class="card"><h3>Session</h3><button class="btn ghost" id="st-logout-2">Log out</button></div>';
+    var saveAcc = C.$("#st-save-account");
+    if (saveAcc) saveAcc.addEventListener("click", function () {
+      auth.updateProfile({ display_name: C.$("#st-name").value.trim() }).then(function () {
+        C.toast("Profile saved");
+      }).catch(function (err) { C.toast(err.message || "Could not save", "error"); });
+    });
+    var out2 = C.$("#st-logout-2");
+    if (out2) out2.addEventListener("click", function () {
+      auth.signOut().then(function () { C.toast("Signed out"); location.hash = "#/"; });
     });
   }
 
@@ -1760,7 +2064,7 @@
     browse: browsePage, question: questionPage, practice: practicePage,
     saved: savedPage, progress: progressPage, profile: profilePage,
     upload: uploadPage, admin: adminPage, report: reportPage,
-    onboarding: onboardingPage,
+    onboarding: onboardingPage, settings: settingsPage,
     syllabus: syllabusPage, leaderboard: leaderboardPage, analytics: analyticsPage,
     renderQCard: renderQCard, bindFavButtons: bindFavButtons,
   };

@@ -33,6 +33,9 @@
   function matchesFilters(rec, f) {
     f = f || {};
     if (f.course && rec.course_id !== f.course) return false;
+    if (f.subject && rec.subject_id !== f.subject) return false;
+    if (f.subjects && f.subjects.length && f.subjects.indexOf(rec.subject_id) === -1) return false;
+    if (f.courses && f.courses.length && f.courses.indexOf(rec.course_id) === -1) return false;
     if (f.topic && rec.topic_id !== f.topic) return false;
     if (f.subtopic && rec.subtopic_id !== f.subtopic) return false;
     if (f.qtype && rec.qtype !== f.qtype) return false;

@@ -25,7 +25,18 @@
       return Promise.resolve({ qids: filters.qids || [], records: {} });
     }
     return root.QB.api.meta().then(function (m) {
-      var courses = filters.course ? [filters.course] : m.courses.filter(function (c) { return c.n > 0; }).map(function (c) { return c.id; });
+      var scoped = root.QB.store.applyContentScope ? root.QB.store.applyContentScope(filters) : filters;
+      filters = scoped;
+      var courses;
+      if (filters.course) courses = [filters.course];
+      else if (filters.courses && filters.courses.length) courses = filters.courses.slice();
+      else if (filters.subjects && filters.subjects.length) {
+        courses = m.courses.filter(function (c) {
+          return filters.subjects.indexOf(c.subject_id) !== -1 && c.n > 0;
+        }).map(function (c) { return c.id; });
+      } else {
+        courses = m.courses.filter(function (c) { return c.n > 0; }).map(function (c) { return c.id; });
+      }
       var chain = Promise.resolve({});
       courses.forEach(function (courseId) {
         chain = chain.then(function (acc) {

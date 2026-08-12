@@ -60,6 +60,14 @@
   }
   function navigate() {
     var path = parseHash();
+    var auth = root.QB && root.QB.auth;
+    if (auth && auth.needsOnboarding && auth.needsOnboarding()) {
+      var open = path === "/" || /^\/(onboarding|login|signup|profile|settings|upload|admin|report)/.test(path);
+      if (!open && path.indexOf("/onboarding") !== 0) {
+        location.hash = "#/onboarding";
+        return;
+      }
+    }
     var app = $("#app");
     var found = false;
     for (var i = 0; i < routes.length; i++) {
@@ -92,6 +100,7 @@
       a.classList.toggle("active", !!nav && path.indexOf(nav) === 1);
     });
     var user = root.QB && root.QB.auth ? root.QB.auth.currentUser() : null;
+    var ent = root.QB && root.QB.auth && root.QB.auth.entitlement ? root.QB.auth.entitlement() : {};
     var account = $("#nav-account");
     if (account) {
       if (user) {
@@ -102,6 +111,14 @@
         account.href = "#/login";
       }
     }
+    var settings = $("#nav-settings");
+    if (settings) settings.hidden = !user;
+    var logout = $("#nav-logout");
+    if (logout) logout.hidden = !user;
+    var menu = $("#nav-user-menu");
+    if (menu) menu.hidden = !user;
+    var admin = $("#nav-admin");
+    if (admin) admin.hidden = !(user && ent.isAdmin);
   }
 
   /* ---------------------------------------------------------------- meta */
