@@ -1,0 +1,54 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Data (source PDFs are private/copyrighted -> keep local, never commit) ---
+data/papers/*
+!data/papers/.gitkeep
+data/questions/*
+!data/questions/.gitkeep
+data/pages/*
+!data/pages/.gitkeep
+data/solutions/*
+!data/solutions/.gitkeep
+data/questionbank.db
+data/*.db
+data/*.db-*
+data/exports/*
+!data/exports/.gitkeep
+
+# --- Static site: generated output + full private export ----------------------
+# site/content_sample is COMMITTED (synthetic sample). site/content is the
+# full export of your private library — keep it local, publish deliberately.
+site/_site/
+site/content/
+node_modules/
+
+# --- Secrets / local config ---
+.env
+*.key
+*.pem
+secrets*
+
+# --- Static site: generated output + full private export ----------------------
+# site/content_sample is COMMITTED (synthetic sample). site/content is the
+# full export of your private library — keep it local, publish deliberately.
+site/_site/
+site/content/
+node_modules/
+
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

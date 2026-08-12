@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "questionbank"
+version = "0.1.0"
+description = "Image-first question bank for Australian high-school (HSC) exam papers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["hsc", "australia", "education", "question-bank", "ocr", "pdf"]
+dependencies = [
+    "pymupdf>=1.24",
+    "Pillow>=10.0",
+    "PyYAML>=6.0",
+    "Flask>=3.0",
+    "pytesseract>=0.3.10",
+    "rapidfuzz>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+questionbank = "pipeline.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pipeline*", "web*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

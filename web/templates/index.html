@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Search questions{% endblock %}
+{% block content %}
+<div class="hero">
+  <h1>Practise real HSC-style questions</h1>
+  <p class="sub">Search thousands of questions from trial papers, past papers and worksheets.
+     Every question is shown as a high-resolution image of the original paper —
+     maths, diagrams and graphs exactly as printed.</p>
+  <form class="searchbar" method="get" action="{{ url_for('index') }}">
+    <input type="search" name="q" value="{{ q }}" placeholder="e.g. normal distribution, integration, projectile motion…"
+           aria-label="Search questions">
+    <button type="submit">Search</button>
+  </form>
+</div>
+
+<div class="layout">
+  <aside class="filters">
+    <h3>Filters</h3>
+    <form method="get" action="{{ url_for('index') }}" id="filter-form">
+      <input type="hidden" name="q" value="{{ q }}">
+      <label>Subject
+        <select name="subject" id="f-subject">
+          <option value="">All subjects</option>
+          {% for s in options.subjects %}
+          <option value="{{ s.id }}" {{ 'selected' if filters.subject_id == s.id }}>{{ s.name }} ({{ s.n }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Course
+        <select name="course" id="f-course">
+          <option value="">All courses</option>
+          {% for c in options.courses %}
+          <option value="{{ c.id }}" data-subject="{{ c.subject_id }}"
+                  {{ 'selected' if filters.course_id == c.id }}>{{ c.name }} ({{ c.n }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Topic
+        <select name="topic" id="f-topic">
+          <option value="">All topics</option>
+          {% for t in options.topics %}
+          <option value="{{ t.id }}" data-course="{{ t.course_id }}"
+                  {{ 'selected' if filters.topic_id == t.id }}>{{ t.name }} ({{ t.n }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="row">
+        <label>Year level
+          <select name="year_level">
+            <option value="">Any</option>
+            <option value="11" {{ 'selected' if filters.year_level == 11 }}>Year 11</option>
+            <option value="12" {{ 'selected' if filters.year_level == 12 }}>Year 12</option>
+          </select>
+        </label>
+        <label>Type
+          <select name="type">
+            <option value="">Any</option>
+            {% for t in options.question_types %}
+            <option value="{{ t }}" {{ 'selected' if filters.question_type == t }}>{{ t.replace('_', ' ') }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Difficulty min
+          <select name="difficulty_min">
+            <option value="">—</option>
+            {% for d in [1,2,3,4,5] %}
+            <option value="{{ d }}" {{ 'selected' if filters.difficulty_min == d }}>{{ d }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Difficulty max
+          <select name="difficulty_max">
+            <option value="">—</option>
+            {% for d in [1,2,3,4,5] %}
+            <option value="{{ d }}" {{ 'selected' if filters.difficulty_max == d }}>{{ d }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <label>Paper type
+        <select name="paper_type">
+          <option value="">Any</option>
+          {% for pt in options.paper_types %}
+          <option value="{{ pt }}" {{ 'selected' if filters.paper_type == pt }}>{{ pt.replace('-', ' ') }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Paper year
+        <select name="paper_year">
+          <option value="">Any</option>
+          {% for y in options.paper_years %}
+          <option value="{{ y }}" {{ 'selected' if filters.paper_year == y }}>{{ y }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="btn">Apply</button>
+      <a class="btn ghost" href="{{ url_for('index') }}">Reset</a>
+    </form>
+  </aside>
+
+  <section class="results">
+    <p class="count">{{ total }} question{{ 's' if total != 1 }} found</p>
+    {% for q in questions %}
+    <article class="card">
+      <div class="card-head">
+        <span class="qnum">Q{{ q.question_number }}</span>
+        <span class="badge">{{ q.course_name or 'Unknown course' }}</span>
+        {% if q.topic_name %}<span class="badge topic">{{ q.topic_name }}</span>{% endif %}
+        {% if q.difficulty %}<span class="badge diff">Difficulty {{ q.difficulty }}/5</span>{% endif %}
+        {% if q.marks %}<span class="badge marks">{{ q.marks }} mark{{ 's' if q.marks != 1 }}</span>{% endif %}
+      </div>
+      <p class="meta">
+        {{ q.paper_name or 'Unknown paper' }}{% if q.paper_year %} · {{ q.paper_year }}{% endif %}
+        {% if q.paper_type %} · {{ q.paper_type.replace('-', ' ') }}{% endif %}
+        · page {{ q.page_start }}{% if q.page_end != q.page_start %}–{{ q.page_end }}{% endif %}
+      </p>
+      {% if q.image_url %}
+      <a href="{{ url_for('question_page', qid=q.id) }}">
+        <img class="qimg" src="{{ q.image_url }}" alt="Question {{ q.question_number }} image" loading="lazy">
+      </a>
+      {% endif %}
+      <div class="card-actions">
+        <a class="btn" href="{{ url_for('question_page', qid=q.id) }}">Open question</a>
+      </div>
+    </article>
+    {% else %}
+    <div class="empty">
+      <p>No questions match your search.</p>
+      <p class="sub">Try fewer filters, or check the OCR text with fewer keywords — OCR is imperfect, so
+         try single keywords like <em>integral</em> or <em>projectile</em>.</p>
+    </div>
+    {% endfor %}
+
+    {% if pages > 1 %}
+    <nav class="pager">
+      {% if page > 1 %}<a href="?{{ request.query_string|replace('page=' ~ page, '') }}&page={{ page - 1 }}">← prev</a>{% endif %}
+      <span>page {{ page }} / {{ pages }}</span>
+      {% if page < pages %}<a href="?{{ request.query_string|replace('page=' ~ page, '') }}&page={{ page + 1 }}">next →</a>{% endif %}
+    </nav>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

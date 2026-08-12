@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "source": "sample",
+  "generated_at": "2026-08-12T03:40:36",
+  "counts": {
+    "questions": 13,
+    "papers": 1,
+    "courses": 18,
+    "topics": 36,
+    "images": 13,
+    "tokens": 103
+  },
+  "config": {
+    "shard_size": 2000,
+    "include_ocr": true,
+    "webp": true
+  },
+  "quality": {
+    "questions": 13,
+    "issues": 0,
+    "errors": 0,
+    "warnings": 0,
+    "by_code": {},
+    "clean_questions": 13
+  }
+}

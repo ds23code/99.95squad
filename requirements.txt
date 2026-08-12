@@ -1,0 +1,10 @@
+# Core pipeline + website
+pymupdf>=1.24,<2            # PDF rendering, layout extraction (import as `pymupdf`)
+Pillow>=10.0                # image handling / cropping
+PyYAML>=6.0                 # configuration (config/*.yaml)
+Flask>=3.0                  # website
+pytesseract>=0.3.10         # OCR binding (requires the `tesseract` binary, see README)
+rapidfuzz>=3.0              # fuzzy matching for filename/metadata classification
+
+# Development / tests
+pytest>=8.0

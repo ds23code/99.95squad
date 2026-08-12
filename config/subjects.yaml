@@ -1,0 +1,153 @@
+# =============================================================================
+# Subjects & courses
+# =============================================================================
+# `aliases` are matched (case-insensitively, as substrings) against paper
+# filenames and paper text to auto-detect the course.  Add your own.
+#
+# Add new subjects/courses here; the pipeline and website pick them up
+# automatically (run `python -m pipeline init` after editing to seed the DB).
+
+default_year_level: 12
+
+subjects:
+  - id: mathematics
+    name: Mathematics
+    aliases: [maths, mathematics, math]
+    courses:
+      - id: mathematics-advanced
+        name: Mathematics Advanced
+        aliases: [2u, 2 unit, 2unit, adv, advanced, mathematics advanced, mathadv, "2u-adv"]
+        year_level: 12
+      - id: mathematics-extension-1
+        name: Mathematics Extension 1
+        aliases: [3u, 3 unit, 3unit, ext1, extension 1, ext 1, mx1, mathematics extension 1]
+        year_level: 12
+      - id: mathematics-extension-2
+        name: Mathematics Extension 2
+        aliases: [4u, 4 unit, 4unit, ext2, extension 2, ext 2, mx2, mathematics extension 2]
+        year_level: 12
+      - id: mathematics-standard
+        name: Mathematics Standard
+        aliases: [std, standard, 1u, general, mathematics standard, mathstd]
+        year_level: 12
+
+  - id: physics
+    name: Physics
+    aliases: [physics, phys]
+    courses:
+      - id: physics
+        name: Physics
+        aliases: [physics, phys]
+        year_level: 12
+
+  - id: chemistry
+    name: Chemistry
+    aliases: [chemistry, chem]
+    courses:
+      - id: chemistry
+        name: Chemistry
+        aliases: [chemistry, chem]
+        year_level: 12
+
+  - id: biology
+    name: Biology
+    aliases: [biology, bio]
+    courses:
+      - id: biology
+        name: Biology
+        aliases: [biology, bio]
+        year_level: 12
+
+  - id: economics
+    name: Economics
+    aliases: [economics, econ]
+    courses:
+      - id: economics
+        name: Economics
+        aliases: [economics, econ]
+        year_level: 12
+
+  - id: english
+    name: English
+    aliases: [english, eng, eal]
+    courses:
+      - id: english-advanced
+        name: English Advanced
+        aliases: [english advanced, eng adv, eal]
+        year_level: 12
+
+  - id: engineering
+    name: Engineering Studies
+    aliases: [engineering]
+    courses:
+      - id: engineering-studies
+        name: Engineering Studies
+        aliases: [engineering studies, engineering, eng studies]
+        year_level: 12
+
+  - id: science
+    name: Science
+    aliases: [science, sciences]
+    courses:
+      - id: investigating-science
+        name: Investigating Science
+        aliases: [investigating science, inv sci]
+        year_level: 12
+
+  - id: history
+    name: History
+    aliases: [history]
+    courses:
+      - id: modern-history
+        name: Modern History
+        aliases: [modern history, mod hist]
+        year_level: 12
+      - id: ancient-history
+        name: Ancient History
+        aliases: [ancient history, anc hist]
+        year_level: 12
+
+  - id: geography
+    name: Geography
+    aliases: [geography, geog]
+    courses:
+      - id: geography
+        name: Geography
+        aliases: [geography, geog]
+        year_level: 12
+
+  - id: business-studies
+    name: Business Studies
+    aliases: [business]
+    courses:
+      - id: business-studies
+        name: Business Studies
+        aliases: [business studies, business, bus]
+        year_level: 12
+
+  - id: legal-studies
+    name: Legal Studies
+    aliases: [legal]
+    courses:
+      - id: legal-studies
+        name: Legal Studies
+        aliases: [legal studies, legal, law]
+        year_level: 12
+
+  - id: pdhpe
+    name: PDHPE
+    aliases: [pdhpe, pe]
+    courses:
+      - id: pdhpe
+        name: PDHPE
+        aliases: [pdhpe, personal development, health and physical education]
+        year_level: 12
+
+  - id: software-engineering
+    name: Software Engineering
+    aliases: [software]
+    courses:
+      - id: software-engineering
+        name: Software Engineering
+        aliases: [software engineering, software, sde]
+        year_level: 12

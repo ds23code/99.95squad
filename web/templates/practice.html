@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Practice mode{% endblock %}
+{% block content %}
+<h1>Practice mode</h1>
+<p class="sub">Pick filters and get random questions. Answers stay hidden until you reveal them.</p>
+
+<div class="practice-setup">
+  <form id="practice-form" class="inline-form">
+    <select name="course" id="p-course">
+      <option value="">Any course</option>
+      {% for c in options.courses %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+    </select>
+    <select name="topic" id="p-topic">
+      <option value="">Any topic</option>
+      {% for t in options.topics %}<option value="{{ t.id }}" data-course="{{ t.course_id }}">{{ t.name }}</option>{% endfor %}
+    </select>
+    <select name="difficulty_min">
+      <option value="">Difficulty —</option>
+      {% for d in [1,2,3,4,5] %}<option value="{{ d }}">{{ d }}+</option>{% endfor %}
+    </select>
+    <select name="type">
+      <option value="">Any type</option>
+      {% for t in options.question_types %}<option value="{{ t }}">{{ t.replace('_', ' ') }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="btn">New question</button>
+  </form>
+  <div class="timer-wrap">
+    <span id="timer">00:00</span>
+    <button class="btn ghost" id="timer-toggle" type="button">Start timer</button>
+  </div>
+</div>
+
+<div id="practice-area">
+  <div class="empty"><p>Press <strong>New question</strong> to begin.</p></div>
+</div>
+{% endblock %}

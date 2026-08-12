@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review {{ q.id }} — 99.95squad admin</title>
+  <style>
+    :root { --ink:#0f1420; --muted:#5b6472; --line:#e7e9ef; --brand:#2f4bf7; --ok:#167a4c; --warn:#a8540f; --danger:#c23b3b; --bg:#f7f8fa; }
+    * { box-sizing:border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; margin:0; color:var(--ink); background:var(--bg); }
+    .top { background:#fff; border-bottom:1px solid var(--line); padding:10px 0; position:sticky; top:0; z-index:10; }
+    .wrap { max-width:1500px; margin:0 auto; padding:0 20px; }
+    .top-inner { display:flex; align-items:center; gap:14px; }
+    .top a { color:var(--brand); text-decoration:none; font-size:13.5px; }
+    .progress { font-size:13px; color:var(--muted); }
+    .layout { display:grid; grid-template-columns: minmax(420px, 1.2fr) minmax(340px, 1fr); gap:16px; padding:16px 0 40px; align-items:start; }
+    @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+    .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; }
+    .imgbox { background:#fff; border:1px solid var(--line); border-radius:12px; padding:10px; }
+    .imgbox img { width:100%; height:auto; }
+    h2 { font-size:15px; margin:0 0 10px; }
+    label { display:block; font-size:12px; font-weight:600; color:var(--muted); margin:10px 0 3px; }
+    input, select, textarea { width:100%; padding:7px 9px; border:1px solid #d4d8e1; border-radius:8px; font:inherit; font-size:13.5px; background:#fff; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+    .actions { display:flex; gap:8px; margin-top:16px; flex-wrap:wrap; }
+    .btn { background:var(--brand); color:#fff; border:0; border-radius:9px; padding:10px 16px; font-size:14px; font-weight:600; cursor:pointer; }
+    .btn.ok { background:var(--ok); }
+    .btn.ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
+    .btn:hover { opacity:.9; }
+    .conf { font-size:12.5px; color:var(--muted); margin:4px 0; }
+    .badge { display:inline-block; border-radius:999px; padding:2px 9px; font-size:11px; font-weight:700; background:#eef1fe; color:#2238c4; margin:2px 2px 0 0; }
+    .badge.warn { background:#fdf1e3; color:var(--warn); }
+    pre.ocr { white-space:pre-wrap; background:#fbfbfe; border:1px solid var(--line); border-radius:8px; padding:10px; font-size:12px; max-height:340px; overflow:auto; }
+    .kbd { background:var(--bg); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:11px; font-family:ui-monospace,monospace; }
+    .shortcuts { color:var(--muted); font-size:12px; margin-top:10px; line-height:1.8; }
+    .flash { background:#e7f5ee; color:var(--ok); border:1px solid #bfe3cf; border-radius:8px; padding:8px 12px; margin-bottom:12px; font-size:13px; }
+  </style>
+</head>
+<body>
+<div class="top">
+  <div class="wrap top-inner">
+    <a href="{{ url_for('admin_review.review_list') }}">← Queue</a>
+    <span class="progress">Question {{ queue_pos }} of {{ queue_total }}</span>
+    <span style="flex:1"></span>
+    {% if prev_id %}<a href="{{ url_for('admin_review.review_one', qid=prev_id) }}" id="lnk-prev">← prev (p)</a>{% endif %}
+    {% if next_id %}<a href="{{ url_for('admin_review.review_one', qid=next_id) }}" id="lnk-next">next (n) →</a>{% endif %}
+  </div>
+</div>
+<div class="wrap">
+  {% with msgs = get_flashed_messages() %}{% for m in msgs %}<div class="flash">{{ m }}</div>{% endfor %}{% endwith %}
+  <div class="layout">
+    <!-- left: the canonical image -->
+    <div class="imgbox">
+      {% if image %}<img src="{{ image }}" alt="Question image" id="q-img">{% else %}<p class="conf">No image.</p>{% endif %}
+      {% if solution %}<p style="margin:10px 0 4px;font-weight:600">Worked solution</p><img src="{{ solution }}" alt="Solution image">{% endif %}
+      <div class="conf" style="margin-top:8px">
+        ID <code>{{ q.id }}</code> · pages {{ q.page_start }}–{{ q.page_end }} ·
+        extraction {{ '%.0f%%' % ((q.extraction_confidence or 0)*100) }} ·
+        classification {{ '%.0f%%' % ((q.classification_confidence or 0)*100) }}
+      </div>
+      <div>
+        {% set flags = q.review_flags | from_json %}
+        {% for f in flags %}<span class="badge warn">{{ f }}</span>{% endfor %}
+      </div>
+    </div>
+
+    <!-- right: editable metadata -->
+    <form method="post" id="review-form" autocomplete="off">
+      <div class="card">
+        <h2>Metadata</h2>
+        <div class="row3">
+          <div><label for="f-qnum">Question number</label><input id="f-qnum" name="question_number" value="{{ q.question_number or '' }}"></div>
+          <div><label for="f-marks">Marks</label><input id="f-marks" name="marks" type="number" value="{{ q.marks if q.marks is not none else '' }}"></div>
+          <div><label for="f-diff">Difficulty 1–5</label><input id="f-diff" name="difficulty" type="number" step="0.5" min="1" max="5" value="{{ q.difficulty if q.difficulty is not none else '' }}"></div>
+        </div>
+        <div class="row3">
+          <div><label for="f-type">Type</label>
+            <select id="f-type" name="question_type">
+              {% for t in ['multiple_choice','short_answer','extended_response','unknown'] %}
+              <option value="{{ t }}" {{ 'selected' if q.question_type == t }}>{{ t }}</option>
+              {% endfor %}
+            </select></div>
+          <div><label for="f-answer">Answer</label><input id="f-answer" name="answer" value="{{ q.answer or '' }}"></div>
+          <div><label for="f-section">Section</label><input id="f-section" name="section" value="{{ q.section or '' }}"></div>
+        </div>
+        <div class="row">
+          <div><label for="f-course">Course</label><input id="f-course" name="course_id" list="course-options" value="{{ q.course_id or '' }}"></div>
+          <div><label for="f-yearlevel">Year level</label><input id="f-yearlevel" name="year_level" type="number" value="{{ q.year_level if q.year_level is not none else '' }}"></div>
+        </div>
+        <div class="row">
+          <div><label for="f-topic">Topic</label><input id="f-topic" name="topic_id" value="{{ q.topic_id or '' }}"></div>
+          <div><label for="f-subtopic">Subtopic</label><input id="f-subtopic" name="subtopic_id" value="{{ q.subtopic_id or '' }}"></div>
+        </div>
+        <datalist id="course-options">
+          {% for c in q.course_options %}<option value="{{ c }}">{% endfor %}
+        </datalist>
+        <div><label for="f-notes">Review notes</label><input id="f-notes" name="review_notes" value="{{ q.review_notes or '' }}"></div>
+        <input type="hidden" name="reviewed_by" value="admin">
+        <input type="hidden" name="next_id" value="{{ next_id or '' }}">
+        <div class="actions">
+          <button class="btn" name="action" value="save" type="submit">Save (s)</button>
+          <button class="btn ok" name="action" value="approve" type="submit">Approve & next (a)</button>
+          {% if next_id %}<a class="btn ghost" href="{{ url_for('admin_review.review_one', qid=next_id) }}">Skip</a>{% endif %}
+        </div>
+        <div class="shortcuts">
+          <b>Shortcuts</b><br>
+          <span class="kbd">n</span> next · <span class="kbd">p</span> prev · <span class="kbd">a</span> approve &amp; next ·
+          <span class="kbd">s</span> save · <span class="kbd">1</span>–<span class="kbd">5</span> difficulty ·
+          <span class="kbd">q</span> question number · <span class="kbd">e</span> answer · <span class="kbd">m</span> marks
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <div class="layout" style="padding-top:0">
+    <!-- OCR -->
+    <div class="card">
+      <h2>OCR text <span class="conf">(search-only — the image above is authoritative)</span></h2>
+      <textarea name="ocr_clean" id="f-ocr" rows="12">{{ q.ocr_clean or '' }}</textarea>
+    </div>
+    <!-- classification summary -->
+    <div class="card">
+      <h2>Classification</h2>
+      {% if q.difficulty_reasoning %}<p class="conf"><b>Difficulty reasoning:</b> {{ q.difficulty_reasoning }}</p>{% endif %}
+      <p class="conf"><b>Paper:</b> {{ q.paper_name or '?' }}{% if q.paper_year %} ({{ q.paper_year }}){% endif %}</p>
+      <p class="conf"><b>OCR engine:</b> {{ q.ocr_engine or 'none' }} · confidence {{ '%.0f%%' % ((q.ocr_confidence or 0)*100) }}</p>
+      <p class="conf"><b>Review status:</b> {{ q.status or 'new' }} · reviewed={{ 'yes' if q.reviewed else 'no' }}</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var form = document.getElementById("review-form");
+  var nextId = {{ next_id | tojson }};
+  function submit(action) {
+    var btn = document.createElement("input");
+    btn.type = "hidden"; btn.name = "action"; btn.value = action;
+    form.appendChild(btn);
+    form.submit();
+  }
+  document.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit("save"); return; }
+      return; // don't hijack typing
+    }
+    switch (e.key) {
+      case "n": if (nextId) location.href = document.getElementById("lnk-next").href; break;
+      case "p": var pl = document.getElementById("lnk-prev"); if (pl) location.href = pl.href; break;
+      case "a": e.preventDefault(); submit("approve"); break;
+      case "s": e.preventDefault(); submit("save"); break;
+      case "q": e.preventDefault(); document.getElementById("f-qnum").focus(); break;
+      case "e": e.preventDefault(); document.getElementById("f-answer").focus(); break;
+      case "m": e.preventDefault(); document.getElementById("f-marks").focus(); break;
+      case "d": e.preventDefault(); document.getElementById("f-diff").focus(); break;
+      default:
+        if (/^[1-5]$/.test(e.key)) { document.getElementById("f-diff").value = e.key; }
+    }
+  });
+})();
+</script>
+</body>
+</html>

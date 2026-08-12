@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Question {{ q.question_number }}{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="{{ url_for('index') }}">← Back to search</a></nav>
+
+<article class="card detail" data-qid="{{ q.id }}">
+  <div class="card-head">
+    <span class="qnum">Q{{ q.question_number }}</span>
+    {% if q.section %}<span class="badge">Section {{ q.section }}</span>{% endif %}
+    <span class="badge">{{ q.subject_name or 'Unknown subject' }} · {{ q.course_name or 'Unknown course' }}</span>
+    {% if q.year_level %}<span class="badge">Year {{ q.year_level }}</span>{% endif %}
+    {% if q.topic_name %}<span class="badge topic">{{ q.topic_name }}{% if q.subtopic_name %} → {{ q.subtopic_name }}{% endif %}</span>{% endif %}
+    {% if q.difficulty %}<span class="badge diff">Difficulty {{ q.difficulty }}/5</span>{% endif %}
+    {% if q.marks %}<span class="badge marks">{{ q.marks }} mark{{ 's' if q.marks != 1 }}</span>{% endif %}
+    <span class="badge type">{{ q.question_type.replace('_', ' ') }}</span>
+  </div>
+
+  <p class="meta">
+    Source: {{ q.paper_name or 'Unknown' }}{% if q.paper_year %} ({{ q.paper_year }}){% endif %}
+    {% if q.paper_type %} · {{ q.paper_type.replace('-', ' ') }}{% endif %}
+    · pages {{ q.page_start }}{% if q.page_end != q.page_start %}–{{ q.page_end }}{% endif %}
+  </p>
+
+  {% if q.image_url %}
+  <img class="qimg detail-img" src="{{ q.image_url }}" alt="Question {{ q.question_number }} image">
+  {% endif %}
+
+  <div class="practice-tools">
+    <button class="btn" id="reveal-answer" data-href="{{ url_for('api_question', qid=q.id) }}">Reveal answer</button>
+    <div id="answer-box" class="answer-box hidden">
+      <p class="answer-text"></p>
+      <div class="solution-image"></div>
+    </div>
+    <div class="mark-buttons">
+      <button class="btn ghost" id="btn-favourite" data-kind="favourite">☆ Favourite</button>
+      <button class="btn ghost" id="btn-completed" data-kind="completed">☑ Mark completed</button>
+    </div>
+  </div>
+
+  {% if q.ocr_clean %}
+  <details class="ocr">
+    <summary>OCR text (for search — the image above is authoritative)</summary>
+    <pre>{{ q.ocr_clean }}</pre>
+  </details>
+  {% endif %}
+
+  <p class="meta small">
+    ID {{ q.id }} · extraction confidence {{ '%.0f%%' % (q.extraction_confidence * 100) }}
+    · classification confidence {{ '%.0f%%' % (q.classification_confidence * 100) }}
+    {% if q.status == 'needs_review' %} · <span class="warn">needs review</span>{% endif %}
+  </p>
+</article>
+{% endblock %}
