@@ -64,7 +64,7 @@
     if (!authed()) return Promise.resolve(null);
     return rpc("record_attempt", {
       p_question_id: attempt.question_id,
-      p_correct: !!attempt.correct,
+      p_correct: attempt.correct === null || attempt.correct === undefined ? null : !!attempt.correct,
       p_seconds: Math.max(0, Math.round(attempt.seconds || 0)),
       p_mode: attempt.mode || "practice",
       p_course_id: attempt.course_id || null,

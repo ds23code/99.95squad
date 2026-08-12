@@ -74,12 +74,13 @@
   function recordAttempt(attempt) {
     /* attempt: {qid, correct, mode, seconds, topic_id} */
     var s = load();
+    var corrVal = attempt.correct === null || attempt.correct === undefined ? null : !!attempt.correct;
     s.history.push(Object.assign({
-      qid: attempt.qid, correct: !!attempt.correct, mode: attempt.mode || "practice",
+      qid: attempt.qid, correct: corrVal, mode: attempt.mode || "practice",
       seconds: Math.round(attempt.seconds || 0), ts: new Date().toISOString(),
       topic_id: attempt.topic_id || null,
     }, {}));
-    s.completed[attempt.qid] = { correct: !!attempt.correct, at: new Date().toISOString() };
+    s.completed[attempt.qid] = { correct: corrVal, at: new Date().toISOString() };
     save();
   }
 
@@ -130,21 +131,23 @@
   function analytics() {
     var s = load();
     var total = s.history.length;
-    var correct = s.history.filter(function (h) { return h.correct; }).length;
-    var accuracy = total ? Math.round((correct / total) * 100) : 0;
+    var attempted = s.history.filter(function (h) { return h.correct !== null && h.correct !== undefined; }).length;
+    var correct = s.history.filter(function (h) { return h.correct === true; }).length;
+    var accuracy = attempted ? Math.round((correct / attempted) * 100) : 0;
     var seconds = s.history.reduce(function (a, h) { return a + (h.seconds || 0); }, 0);
 
     // per-topic stats
     var byTopic = {};
     s.history.forEach(function (h) {
       var t = h.topic_id || "unknown";
-      byTopic[t] = byTopic[t] || { n: 0, correct: 0 };
+      byTopic[t] = byTopic[t] || { n: 0, attempted: 0, correct: 0 };
       byTopic[t].n++;
-      if (h.correct) byTopic[t].correct++;
+      if (h.correct !== null && h.correct !== undefined) byTopic[t].attempted++;
+      if (h.correct === true) byTopic[t].correct++;
     });
     var topicStats = Object.keys(byTopic).map(function (t) {
       return { topic_id: t, n: byTopic[t].n, correct: byTopic[t].correct,
-        accuracy: Math.round((byTopic[t].correct / byTopic[t].n) * 100) };
+        accuracy: byTopic[t].attempted ? Math.round((byTopic[t].correct / byTopic[t].attempted) * 100) : 0 };
     }).sort(function (a, b) { return a.accuracy - b.accuracy; });
 
     // streak: consecutive days with >=1 attempt

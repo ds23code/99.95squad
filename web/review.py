@@ -124,5 +124,77 @@ def review_save(qid: str):
     return redirect(url_for("admin_review.review_one", qid=qid))
 
 
+@bp.route("/submissions")
+def submissions_list():
+    db = _db()
+    subs = db.list_uploads()
+    counts = {
+        "total": len(subs),
+        "pending": sum(1 for s in subs if s["status"] == "pending"),
+        "needs_review": sum(1 for s in subs if s["status"] == "needs_review"),
+        "approved": sum(1 for s in subs if s["status"] == "approved"),
+        "duplicate": sum(1 for s in subs if s["status"] == "duplicate"),
+        "rejected": sum(1 for s in subs if s["status"] == "rejected"),
+        "needs_changes": sum(1 for s in subs if s["status"] == "needs_changes"),
+    }
+    return render_template("admin_submissions.html", subs=subs, counts=counts)
+
+
+@bp.route("/submissions/<sub_id>")
+def submission_detail(sub_id: str):
+    db = _db()
+    sub = db.get_upload(sub_id)
+    if not sub:
+        abort(404)
+    paper = db.get_paper(sub["paper_id"]) if sub.get("paper_id") else None
+    questions = db.questions_for_paper(paper["id"]) if paper else []
+    warnings = []
+    if sub.get("duplicate_type") == "exact_sha256" or sub.get("status") == "duplicate":
+        warnings.append("Duplicate SHA-256 hash detected")
+    if sub.get("duplicate_type") == "metadata":
+        warnings.append("Duplicate paper metadata detected")
+    if paper and len(questions) == 0:
+        warnings.append("Zero detected questions")
+    if paper and (len(questions) < 3 or len(questions) > 100):
+        warnings.append(f"Suspicious question count ({len(questions)})")
+    if any((q.get("ocr_confidence") or 0) < 0.5 for q in questions):
+        warnings.append("Unusually low OCR confidence on one or more questions")
+    if any(not q.get("solution_image_path") and not q.get("solution_text") for q in questions):
+        warnings.append("Missing solutions for one or more questions")
+    if sub.get("status") == "error" or (sub.get("size_bytes") and sub["size_bytes"] < 1024):
+        warnings.append("Malformed or extremely small PDF")
+    if paper and not paper.get("course_id"):
+        warnings.append("Unsupported course")
+    if paper and paper.get("status") == "error":
+        warnings.append("Extraction errors reported on paper")
+    return render_template(
+        "admin_submission_detail.html",
+        sub=sub,
+        paper=paper,
+        questions=questions,
+        warnings=warnings,
+    )
+
+
+@bp.route("/submissions/<sub_id>/moderate", methods=["POST"])
+def submission_moderate(sub_id: str):
+    from pipeline.uploads import approve_upload, set_upload_status
+    from flask import current_app
+
+    cfg = current_app.config["QB_CONFIG"]
+    act = request.form.get("action")
+    reviewer = request.form.get("reviewer") or "admin"
+    notes = request.form.get("notes") or None
+    if act == "approve":
+        approve_upload(cfg, sub_id, reviewer=reviewer)
+    elif act in ("reject", "rejected"):
+        set_upload_status(cfg, sub_id, "rejected", reviewer=reviewer, notes=notes)
+    elif act in ("needs_review", "needs_changes", "duplicate", "pending"):
+        set_upload_status(cfg, sub_id, act, reviewer=reviewer, notes=notes)
+    else:
+        abort(400, "invalid action")
+    return redirect(url_for("admin_review.submission_detail", sub_id=sub_id))
+
+
 def register(app) -> None:
     app.register_blueprint(bp)

@@ -387,3 +387,347 @@ courses:
         - id: ecology
           name: Ecology
           keywords: [population, community, food web, energy flow, carrying capacity]
+
+  economics:
+    - id: global-economy
+      name: The Global Economy
+      module: Module 1
+      keywords: [globalisation, free trade, wto, exchange rate, balance of payments, current account, tariff]
+      outcomes:
+        - code: H1
+          description: Demonstrates understanding of economic terms, concepts and relationships
+          skill_concept: Global economic integration
+      subtopics:
+        - id: international-trade
+          name: International Trade
+          keywords: [tariff, subsidy, quota, free trade agreement, protectionism]
+        - id: exchange-rates
+          name: Exchange Rates
+          keywords: [floating, fixed, appreciation, depreciation, twi]
+
+    - id: australia-global
+      name: Australia's Place in the Global Economy
+      module: Module 2
+      keywords: [terms of trade, cad, foreign debt, foreign investment, bilateral]
+      outcomes:
+        - code: H2
+          description: Analyses the economic role of individuals, firms, institutions and governments
+          skill_concept: Australia's trade performance
+      subtopics:
+        - id: balance-of-payments
+          name: Balance of Payments
+          keywords: [current account deficit, capital account, financial account]
+
+    - id: economic-issues
+      name: Economic Issues
+      module: Module 3
+      keywords: [economic growth, inflation, unemployment, external stability, distribution of income, lorenz curve, gini]
+      outcomes:
+        - code: H3
+          description: Explains the role of markets within the global economy
+          skill_concept: Macroeconomic objectives
+      subtopics:
+        - id: inflation-unemployment
+          name: Inflation and Unemployment
+          keywords: [cpi, philips curve, frictional, structural, cyclical, demand pull, cost push]
+
+    - id: economic-policies
+      name: Economic Policies and Management
+      module: Module 4
+      keywords: [monetary policy, fiscal policy, rba, cash rate, budget deficit, microeconomic reform]
+      outcomes:
+        - code: H4
+          description: Analyses the impact of economic policies
+          skill_concept: Macroeconomic and microeconomic management
+      subtopics:
+        - id: monetary-fiscal
+          name: Monetary and Fiscal Policy
+          keywords: [cash rate, interest rate, budget stance, automatic stabilisers]
+
+  business-studies:
+    - id: operations
+      name: Operations
+      module: Module 1
+      keywords: [operations, inputs, transformations, outputs, supply chain, quality control, jit]
+      outcomes:
+        - code: H1
+          description: Critically analyses the role of business in Australia
+          skill_concept: Operations management strategies
+      subtopics:
+        - id: quality-management
+          name: Quality Management
+          keywords: [quality control, quality assurance, tqm]
+
+    - id: marketing
+      name: Marketing
+      module: Module 2
+      keywords: [marketing, segmentation, target market, product, price, promotion, place, ethical marketing]
+      outcomes:
+        - code: H2
+          description: Evaluates business management strategies
+          skill_concept: The marketing mix
+      subtopics:
+        - id: marketing-mix
+          name: The Marketing Mix (4Ps)
+          keywords: [product, price, promotion, place, skimming, penetration]
+
+    - id: finance
+      name: Finance
+      module: Module 3
+      keywords: [finance, cash flow, income statement, balance sheet, liquidity, solvency, gearing, profitability]
+      outcomes:
+        - code: H3
+          description: Investigates financial management processes and reports
+          skill_concept: Financial ratios and reports
+      subtopics:
+        - id: financial-reports
+          name: Financial Reports and Ratios
+          keywords: [balance sheet, cash flow statement, liquidity ratio, gearing ratio]
+
+    - id: human-resources
+      name: Human Resources
+      module: Module 4
+      keywords: [human resources, recruitment, training, awards, enterprise agreement, dispute resolution]
+      outcomes:
+        - code: H4
+          description: Explains human resource management strategies
+          skill_concept: Employment relations and awards
+      subtopics:
+        - id: dispute-resolution
+          name: Dispute Resolution
+          keywords: [arbitration, conciliation, mediation, fair work]
+
+  legal-studies:
+    - id: crime
+      name: Crime
+      module: Core 1
+      keywords: [crime, summary, indictable, mens rea, actus reus, arrest, bail, trial, sentencing, criminal justice]
+      outcomes:
+        - code: H1
+          description: Evaluates the effectiveness of the legal system in addressing criminal matters
+          skill_concept: Criminal investigation and trial process
+      subtopics:
+        - id: sentencing
+          name: Sentencing and Punishment
+          keywords: [deterrence, rehabilitation, retribution, statutory guidelines]
+
+    - id: human-rights
+      name: Human Rights
+      module: Core 2
+      keywords: [human rights, udhr, sovereignty, international court, state sovereignty, treaty]
+      outcomes:
+        - code: H2
+          description: Analyses key human rights documents and mechanisms
+          skill_concept: Promotion and enforcement of human rights
+      subtopics:
+        - id: international-law
+          name: International Law and Sovereignty
+          keywords: [un, icc, icj, state sovereignty, treaty]
+
+  pdhpe:
+    - id: health-priorities
+      name: Health Priorities in Australia
+      module: Core 1
+      keywords: [health priorities, epidemiology, mortality, morbidity, cvd, cancer, social justice, medicare]
+      outcomes:
+        - code: H1
+          description: Describes the nature and extent of health priority areas in Australia
+          skill_concept: Epidemiology and chronic disease prevention
+      subtopics:
+        - id: epidemiology
+          name: Epidemiology and Trends
+          keywords: [mortality, morbidity, infant mortality, life expectancy]
+
+    - id: factors-performance
+      name: Factors Affecting Performance
+      module: Core 2
+      keywords: [energy systems, atp, lactic acid, aerobic, training, biomechanics, recovery, psychology]
+      outcomes:
+        - code: H7
+          description: Explains factors affecting athletic performance and training adaptations
+          skill_concept: Exercise physiology and biomechanics
+      subtopics:
+        - id: energy-systems
+          name: Energy Systems
+          keywords: [atp-pc, lactic acid system, aerobic system]
+
+  modern-history:
+    - id: power-and-authority
+      name: Power and Authority in the Modern World
+      module: Core Study
+      keywords: [power and authority, league of nations, weimar, dictatorship, nazi, treaty of versailles]
+      outcomes:
+        - code: MH12-1
+          description: Accounts for the nature of continuity and change in the modern world
+          skill_concept: Rise of dictatorships after WWI
+      subtopics:
+        - id: rise-of-dictatorships
+          name: Rise of Dictatorships
+          keywords: [weimar republic, fascist, communist, ussr, nazi germany]
+
+  ancient-history:
+    - id: cities-of-vesuvius
+      name: Cities of Vesuvius (Pompeii and Herculaneum)
+      module: Core Study
+      keywords: [pompeii, herculaneum, vesuvius, pliny, amphitheatre, forum, conservation]
+      outcomes:
+        - code: AH12-1
+          description: Accounts for the nature of continuity and change in the ancient world
+          skill_concept: Archaeological excavation and conservation
+      subtopics:
+        - id: economy-society
+          name: Economy and Society
+          keywords: [patron, client, basilica, macellum, fullery]
+
+  geography:
+    - id: ecosystems-at-risk
+      name: Ecosystems at Risk
+      module: Module 1
+      keywords: [ecosystem, vulnerability, resilience, biodiversity, management, intertidal, rainforest]
+      outcomes:
+        - code: H1
+          description: Explains the changing nature of ecosystems and environmental management
+          skill_concept: Ecosystem vulnerability and conservation
+      subtopics:
+        - id: spatial-dynamics
+          name: Spatial Dynamics and Management
+          keywords: [biophysical interactions, human impacts, sustainability]
+
+  english-advanced:
+    - id: texts-human-experiences
+      name: Common Module - Texts and Human Experiences
+      module: Common Module
+      keywords: [human experience, anomaly, paradox, individual, collective, storytelling, representation]
+      outcomes:
+        - code: EA12-1
+          description: Responds to and composes complex texts for understanding, interpretation and analysis
+          skill_concept: Analysis of human experiences in literature
+      subtopics:
+        - id: textual-analysis
+          name: Textual Analysis and Composition
+          keywords: [metaphor, symbolism, motif, tone, narrative voice]
+
+    - id: textual-conversations
+      name: Module A - Textual Conversations
+      module: Module A
+      keywords: [textual conversation, intertextuality, resonance, dissonance, context, adaptation]
+      outcomes:
+        - code: EA12-3
+          description: Critically analyses and uses language forms, features and structures of texts
+          skill_concept: Comparative analysis across contexts
+      subtopics:
+        - id: comparative-study
+          name: Comparative Study of Texts
+          keywords: [context, values, perspective, adaptation]
+
+  english-standard:
+    - id: common-module-standard
+      name: Common Module - Texts and Human Experiences
+      module: Common Module
+      keywords: [human experience, storytelling, emotion, character, relationship]
+      outcomes:
+        - code: EN12-1
+          description: Independently responds to and composes texts for understanding
+          skill_concept: Exploring human experiences
+      subtopics:
+        - id: literature-study
+          name: Close Study of Texts
+          keywords: [characterisation, plot, setting, theme]
+
+  english-extension-1:
+    - id: literary-worlds
+      name: Common Module - Literary Worlds
+      module: Common Module
+      keywords: [literary world, world building, ideological, historical context, genre]
+      outcomes:
+        - code: EE12-1
+          description: Demonstrates an extended understanding of how texts represent literary worlds
+          skill_concept: Theoretical and critical literary analysis
+      subtopics:
+        - id: critical-theory
+          name: Critical Literary Theory
+          keywords: [postcolonial, feminist, modernist, postmodern]
+
+  english-eald:
+    - id: eald-human-experiences
+      name: Module A - Texts and Human Experiences
+      module: Module A
+      keywords: [human experience, culture, language, identity, communication]
+      outcomes:
+        - code: EAL12-1
+          description: Responds to and composes texts in standard Australian English
+          skill_concept: English language acquisition and text analysis
+      subtopics:
+        - id: language-identity
+          name: Language, Identity and Culture
+          keywords: [cultural context, idiom, expression, belonging]
+
+  investigating-science:
+    - id: cause-and-effect
+      name: Cause and Effect
+      module: Module 5
+      keywords: [hypothesis, independent variable, dependent variable, control, correlation, causation]
+      outcomes:
+        - code: INS12-12
+          description: Develops and evaluates scientific questions and hypotheses
+          skill_concept: Experimental design and causal analysis
+      subtopics:
+        - id: experimental-design
+          name: Experimental Design
+          keywords: [validity, reliability, accuracy, error]
+
+  earth-and-environmental-science:
+    - id: earth-processes
+      name: Earths Processes
+      module: Module 5
+      keywords: [plate tectonics, magma, volcano, earthquake, erosion, weathering, climate change]
+      outcomes:
+        - code: EES12-12
+          description: Explains earth processes and environmental hazards
+          skill_concept: Lithosphere and atmosphere dynamics
+      subtopics:
+        - id: hazards-management
+          name: Environmental Hazards
+          keywords: [seismic hazard, mitigation, monitoring]
+
+  science-extension:
+    - id: scientific-research
+      name: The Scientific Research Proposal
+      module: Module 2
+      keywords: [research question, literature review, methodology, data analysis, peer review]
+      outcomes:
+        - code: SE12-1
+          description: Develops a scientific research proposal and report
+          skill_concept: Scientific inquiry and statistical rigor
+      subtopics:
+        - id: statistical-methods
+          name: Statistical Methods in Science
+          keywords: [p-value, null hypothesis, standard error, regression]
+
+  engineering-studies:
+    - id: engineering-mechanics
+      name: Engineering Mechanics
+      module: Module 1
+      keywords: [stress, strain, youngs modulus, truss, bending moment, shear force, friction]
+      outcomes:
+        - code: H1
+          description: Describes the scope of engineering and applies mechanical analysis
+          skill_concept: Structural analysis and materials science
+      subtopics:
+        - id: materials-science
+          name: Materials Science
+          keywords: [tensile strength, ductility, heat treatment, alloy]
+
+  software-engineering:
+    - id: software-development
+      name: Software Development Life Cycle
+      module: Module 1
+      keywords: [agile, waterfall, algorithm, pseudocode, data structure, syntax, oop]
+      outcomes:
+        - code: SE12-1
+          description: Applies software engineering principles to develop solutions
+          skill_concept: Algorithmic design and coding practices
+      subtopics:
+        - id: algorithms-data
+          name: Algorithms and Data Structures
+          keywords: [sorting, searching, array, recursion, time complexity]

@@ -112,6 +112,14 @@ def _facet_tokens(q: dict) -> list[str]:
         tokens.append(f"d:{int(round(q['difficulty']))}")
     if q.get("marks") is not None:
         tokens.append(f"m:{min(int(q['marks']), 15)}")
+    if q.get("organisation"):
+        tokens.append(f"org:{q['organisation']}")
+    if q.get("module"):
+        tokens.append(f"mod:{q['module']}")
+    if q.get("has_solution") or q.get("solution"):
+        tokens.append("sol:true")
+    else:
+        tokens.append("sol:false")
     return tokens
 
 
@@ -380,6 +388,9 @@ def export_static(
         "paper_years": sorted({q.get("paper_year") for q in questions if q.get("paper_year")}, reverse=True),
         "question_types": sorted({q.get("qtype") for q in questions if q.get("qtype")}),
         "year_levels": sorted({c.get("year_level") for c in courses if c.get("year_level")}),
+        "organisations": sorted({q.get("organisation") for q in questions if q.get("organisation")}),
+        "modules": sorted({q.get("module") for q in questions if q.get("module")}),
+        "solved_options": ["true", "false"],
     }
     topics = []
     for t in topics_raw:
@@ -402,6 +413,7 @@ def export_static(
     (meta_dir / "topics.json").write_text(json.dumps(topics), encoding="utf-8")
     (meta_dir / "papers.json").write_text(json.dumps(papers), encoding="utf-8")
     (meta_dir / "facets.json").write_text(json.dumps(facets), encoding="utf-8")
+    (meta_dir / "curriculum.json").write_text(json.dumps(config.topics), encoding="utf-8")
 
     total_tokens = 0
     for _, qs in by_course.items():
@@ -460,6 +472,15 @@ def _public_record(q: dict) -> dict:
         "paper_year": q.get("paper_year"),
         "paper_type": q.get("paper_type"),
         "ocr_conf": round(q.get("ocr_confidence") or 0, 3),
+        "module": q.get("module"),
+        "outcome": q.get("outcome"),
+        "topic_tags": q.get("topic_tags") or ([q["topic_id"]] if q.get("topic_id") else []),
+        "has_solution": 1 if q.get("solution_image_path") or q.get("solution_text") else 0,
+        "solution_confidence": round(q.get("solution_confidence") or 1.0, 3),
+        "solution_source": q.get("solution_source") or "official",
+        "solution_status": q.get("solution_status") or "approved",
+        "extraction_confidence": round(q.get("extraction_confidence") or 1.0, 3),
+        "classification_confidence": round(q.get("classification_confidence") or 1.0, 3),
     }
 
 

@@ -43,6 +43,22 @@ CREATE TABLE IF NOT EXISTS subtopics (
     name TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS curriculum_topics (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES courses(id),
+    year_level INTEGER,
+    module TEXT,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS curriculum_outcomes (
+    id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES topics(id),
+    code TEXT NOT NULL,
+    description TEXT NOT NULL,
+    skill_concept TEXT
+);
+
 CREATE TABLE IF NOT EXISTS papers (
     id TEXT PRIMARY KEY,
     filename TEXT NOT NULL,
@@ -169,9 +185,22 @@ CREATE TABLE IF NOT EXISTS upload_submissions (
     paper_id TEXT REFERENCES papers(id),
     premium_granted INTEGER DEFAULT 0,
     review_notes TEXT,
+    duplicate_of TEXT,
+    duplicate_type TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     reviewed_at TEXT,
     reviewed_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    id TEXT PRIMARY KEY,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    previous_status TEXT,
+    new_status TEXT,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS problem_reports (
@@ -259,6 +288,10 @@ class Database:
                         "INSERT OR IGNORE INTO topics (id, course_id, name) VALUES (?, ?, ?)",
                         (f"{course_id}:{topic['id']}", course_id, topic["name"]),
                     )
+                    c.execute(
+                        "INSERT OR IGNORE INTO curriculum_topics (id, course_id, year_level, module, name) VALUES (?, ?, ?, ?, ?)",
+                        (f"{course_id}:{topic['id']}", course_id, topic.get("year_level", 12), topic.get("module"), topic["name"]),
+                    )
                     for st in topic.get("subtopics", []):
                         c.execute(
                             "INSERT OR IGNORE INTO subtopics (id, topic_id, name) VALUES (?, ?, ?)",
@@ -268,6 +301,18 @@ class Database:
                                 st["name"],
                             ),
                         )
+                    for out in topic.get("outcomes", []):
+                        if isinstance(out, dict):
+                            c.execute(
+                                "INSERT OR IGNORE INTO curriculum_outcomes (id, topic_id, code, description, skill_concept) VALUES (?, ?, ?, ?, ?)",
+                                (
+                                    f"{course_id}:{topic['id']}:{out['code']}",
+                                    f"{course_id}:{topic['id']}",
+                                    out["code"],
+                                    out["description"],
+                                    out.get("skill_concept"),
+                                ),
+                            )
 
     # ---------------------------------------------------------------- papers
     def insert_paper(self, paper: dict) -> str:
@@ -306,6 +351,27 @@ class Database:
         with self.conn() as c:
             row = c.execute("SELECT * FROM papers WHERE sha256 = ?", (sha256,)).fetchone()
             return dict(row) if row else None
+
+    def find_papers_by_metadata(
+        self,
+        course_id: str | None,
+        year: int | None,
+        organisation: str | None = None,
+        paper_type: str | None = None,
+    ) -> list[dict]:
+        if not course_id or not year:
+            return []
+        with self.conn() as c:
+            sql = "SELECT * FROM papers WHERE course_id=? AND year=?"
+            params: list[Any] = [course_id, year]
+            if organisation:
+                sql += " AND lower(organisation)=?"
+                params.append(organisation.lower())
+            if paper_type:
+                sql += " AND paper_type=?"
+                params.append(paper_type)
+            rows = c.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
 
     def set_paper_status(self, paper_id: str, status: str, error: str | None = None) -> None:
         with self.conn() as c:
@@ -648,17 +714,22 @@ class Database:
 
     # ------------------------------------------------------------ uploads
     def upsert_upload(self, upload: dict) -> str:
+        upload = dict(upload)
+        upload.setdefault("duplicate_of", None)
+        upload.setdefault("duplicate_type", None)
         with self.conn() as c:
             c.execute(
                 """INSERT INTO upload_submissions (id, sha256, filename, file_path,
-                       size_bytes, uploader, status, paper_id, premium_granted, review_notes)
+                       size_bytes, uploader, status, paper_id, premium_granted, review_notes,
+                       duplicate_of, duplicate_type)
                    VALUES (:id, :sha256, :filename, :file_path, :size_bytes, :uploader, :status,
-                       :paper_id, :premium_granted, :review_notes)
+                       :paper_id, :premium_granted, :review_notes, :duplicate_of, :duplicate_type)
                    ON CONFLICT(sha256) DO UPDATE SET
                        filename=excluded.filename, file_path=excluded.file_path,
                        size_bytes=excluded.size_bytes,
                        uploader=excluded.uploader, status=excluded.status,
-                       paper_id=excluded.paper_id, review_notes=excluded.review_notes""",
+                       paper_id=excluded.paper_id, review_notes=excluded.review_notes,
+                       duplicate_of=excluded.duplicate_of, duplicate_type=excluded.duplicate_type""",
                 upload,
             )
             return upload["id"]
@@ -703,6 +774,41 @@ class Database:
                    WHERE id=?""",
                 (status, reviewer, notes, paper_id, status, upload_id),
             )
+
+    # ------------------------------------------------------------ audit events
+    def record_audit_event(
+        self,
+        actor: str,
+        action: str,
+        target_id: str,
+        previous_status: str | None = None,
+        new_status: str | None = None,
+        notes: str | None = None,
+    ) -> str:
+        import uuid
+        event_id = f"aud-{uuid.uuid4().hex[:12]}"
+        with self.conn() as c:
+            c.execute(
+                """INSERT INTO audit_events (id, actor, action, target_id,
+                       previous_status, new_status, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (event_id, actor, action, target_id, previous_status, new_status, notes),
+            )
+        return event_id
+
+    def list_audit_events(self, limit: int = 100, target_id: str | None = None) -> list[dict]:
+        with self.conn() as c:
+            if target_id:
+                rows = c.execute(
+                    "SELECT * FROM audit_events WHERE target_id=? ORDER BY created_at DESC LIMIT ?",
+                    (target_id, limit),
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM audit_events ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [dict(r) for r in rows]
 
     # ------------------------------------------------------------ profiles
     def upsert_profile(self, profile: dict) -> str:

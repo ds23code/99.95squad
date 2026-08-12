@@ -439,3 +439,87 @@ def process_directory(
 
     db.close()
     return results
+
+
+def import_directory(
+    config: Config,
+    papers_dir: str | Path,
+    *,
+    force: bool = False,
+    resume: bool = True,
+    limit: Optional[int] = None,
+    pattern: Optional[str] = None,
+    retry_failed: bool = False,
+) -> dict:
+    """Robust batch import workflow for thousands of papers.
+
+    Supports bounded processing, exact-duplicate skipping, failure isolation,
+    resumability, retry of failed jobs, and explicit counts reporting.
+    """
+    import fnmatch
+    from .ingest import sha256_of_file
+
+    pdfs = discover_pdfs(papers_dir)
+    if pattern:
+        pdfs = [p for p in pdfs if fnmatch.fnmatch(p.name.lower(), pattern.lower())]
+    if limit:
+        pdfs = pdfs[:limit]
+
+    counts: dict[str, Any] = {
+        "discovered": len(pdfs),
+        "duplicates": 0,
+        "queued": 0,
+        "processing": 0,
+        "completed": 0,
+        "failed": 0,
+        "needs_review": 0,
+        "files": [],
+    }
+
+    db = Database(config.paths["database"])
+    db.init_schema()
+
+    for pdf in pdfs:
+        try:
+            digest = sha256_of_file(pdf)
+            existing = db.get_paper_by_sha256(digest)
+            if existing:
+                counts["duplicates"] += 1
+                if resume and not force and existing.get("status") == "complete":
+                    nr = db.one(
+                        "SELECT COUNT(*) FROM questions WHERE paper_id=? AND status='needs_review'",
+                        (existing["id"],),
+                    )
+                    if nr and nr > 0:
+                        counts["needs_review"] += 1
+                    counts["files"].append({"file": str(pdf), "status": "skipped_duplicate"})
+                    continue
+                if not force and not retry_failed and existing.get("status") == "error":
+                    counts["failed"] += 1
+                    counts["files"].append({"file": str(pdf), "status": "failed_previously"})
+                    continue
+
+            counts["queued"] += 1
+            counts["processing"] += 1
+
+            r = process_pdf(config, pdf, force=force, db=db)
+            if r.get("skipped"):
+                counts["files"].append({"file": str(pdf), "status": "skipped"})
+            else:
+                counts["completed"] += 1
+                paper_id = r.get("paper_id")
+                if paper_id:
+                    nr = db.one(
+                        "SELECT COUNT(*) FROM questions WHERE paper_id=? AND status='needs_review'",
+                        (paper_id,),
+                    )
+                    if nr and nr > 0:
+                        counts["needs_review"] += 1
+                counts["files"].append({"file": str(pdf), "status": "completed"})
+        except Exception as exc:
+            log.exception("import error for %s", pdf)
+            counts["failed"] += 1
+            counts["files"].append({"file": str(pdf), "status": "failed", "error": str(exc)})
+
+    db.close()
+    return counts

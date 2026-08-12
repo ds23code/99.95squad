@@ -107,3 +107,72 @@ def test_moderation_statuses(config, upload_pdf):
 
     with pytest.raises(ValueError):
         set_upload_status(config, upload_id, "bogus", reviewer="mod")
+
+
+def test_exact_sha256_duplicate(config, upload_pdf):
+    r1 = register_upload(config, upload_pdf, uploader="student-dup1")
+    assert r1["status"] == "new"
+    r2 = register_upload(config, upload_pdf, uploader="student-dup2")
+    assert r2["status"] == "duplicate"
+    assert r2["duplicate_type"] == "exact_sha256"
+
+
+def test_metadata_duplicate(config, upload_pdf, tmp_path):
+    import pymupdf
+
+    r1 = register_upload(config, upload_pdf, uploader="student-meta1")
+    assert r1["status"] == "new"
+
+    # Create a different PDF file with the same course/year metadata filename
+    path2 = tmp_path / "Student_Trial_2024_Maths_Advanced_v2.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 100), "Different text encoding", fontsize=16)
+    doc.save(str(path2))
+    doc.close()
+
+    r2 = register_upload(config, path2, uploader="student-meta2")
+    assert r2["status"] == "needs_review"
+    assert r2["reason"] == "metadata-duplicate"
+    assert r2["duplicate_type"] == "metadata"
+
+
+def test_genuinely_different_papers(config, tmp_path):
+    import pymupdf
+
+    path = tmp_path / "Physics_2025_Trial_Paper.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 100), "Physics Trial 2025", fontsize=16)
+    doc.save(str(path))
+    doc.close()
+
+    r = register_upload(config, path, uploader="student-diff")
+    assert r["status"] == "new"
+    assert r["upload"]["status"] == "pending"
+
+
+def test_duplicate_after_approved_and_override(config, upload_pdf):
+    from pipeline.uploads import override_duplicate
+
+    r1 = register_upload(config, upload_pdf, uploader="student-app1")
+    upload_id = r1["upload"]["id"]
+    approve_upload(config, upload_id, reviewer="moderator")
+
+    # Now uploading exact duplicate of approved paper
+    r2 = register_upload(config, upload_pdf, uploader="student-app2")
+    assert r2["status"] == "duplicate"
+    assert r2["reason"] == "already-in-library"
+
+    # Test admin override of duplicate
+    dup_id = r2["upload"]["id"]
+    overridden = override_duplicate(config, dup_id, new_status="pending", reviewer="admin-lead")
+    assert overridden["status"] == "pending"
+
+    from pipeline.database import Database
+
+    db = Database(config.paths["database"])
+    db.init_schema()
+    events = db.list_audit_events(target_id=dup_id)
+    assert any(e["action"] == "duplicate_overridden" for e in events)
+    db.close()

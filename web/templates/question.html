@@ -31,9 +31,12 @@
       <p class="answer-text"></p>
       <div class="solution-image"></div>
     </div>
-    <div class="mark-buttons">
-      <button class="btn ghost" id="btn-favourite" data-kind="favourite">☆ Favourite</button>
-      <button class="btn ghost" id="btn-completed" data-kind="completed">☑ Mark completed</button>
+    <div class="mark-buttons" role="group" aria-label="Mark question">
+      <button type="button" class="btn ok" id="btn-correct" data-kind="correct" aria-label="Mark Correct">✓ Correct</button>
+      <button type="button" class="btn ghost" id="btn-incorrect" data-kind="incorrect" aria-label="Mark Incorrect">✗ Incorrect</button>
+      <button type="button" class="btn ghost" id="btn-skipped" data-kind="skipped" aria-label="Mark Unattempted or Skipped">─ Skipped</button>
+      <button type="button" class="btn ghost" id="btn-favourite" data-kind="favourite">☆ Favourite</button>
+      <button type="button" class="btn ghost" id="btn-completed" data-kind="completed">☑ Mark completed</button>
     </div>
   </div>
 

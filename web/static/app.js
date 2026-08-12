@@ -82,7 +82,7 @@
   var detailCard = document.querySelector(".card.detail");
   if (detailCard) {
     var qid = detailCard.dataset.qid;
-    [["btn-favourite", "favourite"], ["btn-completed", "completed"]].forEach(function (pair) {
+    [["btn-favourite", "favourite"], ["btn-completed", "completed"], ["btn-correct", "correct"], ["btn-incorrect", "incorrect"], ["btn-skipped", "skipped"]].forEach(function (pair) {
       var btn = document.getElementById(pair[0]);
       if (!btn) return;
       btn.addEventListener("click", function () {
