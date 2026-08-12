@@ -1,0 +1,100 @@
+# =============================================================================
+# Regex patterns used by the question detector, metadata parser and
+# solutions extractor.  Edit freely; the pipeline re-reads them on every run.
+# All patterns are case-insensitive.
+# =============================================================================
+
+# --- Question start markers --------------------------------------------------
+# `question_starts` are tried in order; the first match wins.  Groups must
+# capture the question number.
+question_starts:
+  - regex: '^question\s+(\d{1,3})\b'
+    kind: word
+  - regex: '^q\s*\.?\s*(\d{1,3})\b'
+    kind: short
+  - regex: '^(\d{1,3})\.\s+(?!\d)'
+    kind: numbered
+  - regex: '^(\d{1,3})\)\s*'
+    kind: paren
+
+# --- Section headers ("Section I", "Part A", ...) ----------------------------
+section_headers:
+  - regex: '^section\s+([ivxlcdm]+|[A-D])\b'
+  - regex: '^part\s+([a-dA-D])\b'
+
+# --- Subpart markers "(a) (b) (i) (ii)" --------------------------------------
+subpart_starts:
+  - regex: '^\(([a-z])\)'
+  - regex: '^\(([ivxlcdm]+)\)'
+  - regex: '^([a-z])\)\s+'
+
+# --- Answer / solution section headers ----------------------------------------
+# Everything after one of these on a page is treated as answer/solution
+# material rather than questions.
+answer_section_headers:
+  - regex: '^answers'
+  - regex: '^answer\s+section'
+  - regex: '^worked\s+solutions'
+  - regex: '^solutions\b'
+  - regex: '^marking\s+guidelines?'
+  - regex: '^hsc\s+solutions?'
+
+# --- Inline solution headers (e.g. "Solution 1:" right after a question) ----
+# Must be short lines; a long line like "Solution of the differential
+# equation ..." will NOT match because of the `\s*(to\s+question\s*\d*)?` cap.
+solution_headers:
+  - regex: '^solutions?\s*(to\s+question\s*\d{1,3})?\s*[:.\-]?\s*(\d{1,3})?\s*$'
+    max_len: 45
+
+# --- Multiple-choice option lines ("A. ..." "B) ...") -------------------------
+option_starts:
+  - regex: '^([A-D])[.)]\s+(?=\S)'
+
+# --- Marks patterns -----------------------------------------------------------
+marks_patterns:
+  - regex: '\((\d{1,3})\s*marks?\)'
+  - regex: '\((\d{1,3})\s*mark\)'
+  - regex: '(\d{1,3})\s*marks?\s+each\b'
+  - regex: '(\d{1,3})\s*marks?\s*$'
+
+# --- Paper metadata (filename parsing) ----------------------------------------
+paper_types:
+  - id: trial
+    name: Trial examination
+    aliases: [trial, trials, trial hsc]
+  - id: past-paper
+    name: Past paper
+    aliases: [hsc, past paper, pastpaper, past hsc]
+  - id: assessment
+    name: Assessment task
+    aliases: [assessment, task, exam, examination]
+  - id: worksheet
+    name: Worksheet
+    aliases: [worksheet, work sheet, homework, exercise]
+  - id: practice
+    name: Practice paper
+    aliases: [practice, practise, sample]
+
+# Suffixes / tokens that indicate the paper contains solutions
+solution_indicators:
+  - wsols
+  - solutions
+  - sols
+  - answers
+  - marking guidelines
+  - ms
+
+year_regex: '(20\d{2})'
+
+# Regexes for year-level hints in filenames (Preliminary vs HSC)
+year_level_hints:
+  - regex: '(year\s*11|yr\s*11|yr11|preliminary|prelim)'
+    level: 11
+  - regex: '(year\s*12|yr\s*12|yr12|hsc)'
+    level: 12
+
+# --- Misc lines to ignore during detection ------------------------------------
+junk_lines:
+  - regex: '^\d{1,3}\s*$'            # bare page numbers
+  - regex: '^\s*page\s+\d{1,3}\s*$'
+  - regex: '^[©\-–—•·|~*=_#+\-]{2,}\s*$'

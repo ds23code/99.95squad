@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f1420">
+  <title>99.95squad — Practise HSC questions from real papers</title>
+  <meta name="description" content="Search, filter and practise thousands of HSC-style questions from trial papers, past papers and worksheets. Every question is shown exactly as printed — maths, diagrams and graphs preserved.">
+  <meta property="og:title" content="99.95squad — HSC question bank">
+  <meta property="og:description" content="Practise real HSC-style questions. Image-first, searchable, filterable.">
+  <meta property="og:type" content="website">
+  <link rel="icon" type="image/svg+xml" href="assets/img/favicon.svg">
+  <link rel="icon" type="image/png" href="assets/img/favicon.png">
+  <link rel="apple-touch-icon" href="assets/img/favicon.png">
+  <link rel="stylesheet" href="assets/css/app.css">
+  <script>window.QB_CONFIG = window.QB_CONFIG || {};</script>
+  <script src="config.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar" id="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="#/" aria-label="99.95squad home">
+        <span class="logo-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="34" height="34"><use href="assets/img/logo.svg#mark"></use></svg>
+        </span>
+        <span class="brand-name">99.95<em>squad</em></span>
+      </a>
+      <nav class="main-nav" id="main-nav" aria-label="Primary">
+        <a href="#/browse" data-nav="browse">Questions</a>
+        <a href="#/practice" data-nav="practice">Practise</a>
+        <a href="#/syllabus" data-nav="syllabus">Syllabus</a>
+        <a href="#/leaderboard" data-nav="leaderboard">Ranks</a>
+        <a href="#/progress" data-nav="progress">Progress</a>
+        <a href="#/upload" data-nav="upload">Contribute</a>
+      </nav>
+      <div class="top-actions">
+        <a href="#/dashboard" class="btn ghost btn-small" id="nav-account" data-nav="dashboard">Sign in</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="wrap" tabindex="-1">
+    <div id="app" aria-live="polite">
+      <div class="boot-screen" id="boot-screen">
+        <div class="logo-mark lg" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="48" height="48"><use href="assets/img/logo.svg#mark"></use></svg>
+        </div>
+        <p class="muted">Loading 99.95squad…</p>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div>
+        <p class="brand-name small">99.95<em>squad</em></p>
+        <p class="muted">Image-first question bank for Australian Year 11–12 students.
+          Question images are the source of truth — OCR text is for search only.</p>
+      </div>
+      <nav aria-label="Footer">
+        <a href="#/browse">Browse questions</a>
+        <a href="#/practice">Practice mode</a>
+        <a href="#/upload">Contribute a paper</a>
+        <a href="#/progress">Progress</a>
+      </nav>
+    </div>
+    <p class="wrap muted fine">© <span id="year">2026</span> 99.95squad · Built for serious HSC revision.</p>
+  </footer>
+
+  <div id="modal-root" hidden></div>
+  <div id="toast-root" aria-live="polite"></div>
+
+  <script src="assets/js/core.js"></script>
+  <script src="assets/js/store.js"></script>
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/search.js"></script>
+  <script src="assets/js/gamification.js"></script>
+  <script src="assets/js/backend.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/calendar.js"></script>
+  <script src="assets/js/comments.js"></script>
+  <script src="assets/js/practice.js"></script>
+  <script src="assets/js/pages.js"></script>
+  <script src="assets/js/main.js"></script>
+</body>
+</html>

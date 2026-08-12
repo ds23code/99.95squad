@@ -1,0 +1,68 @@
+# =============================================================================
+# Pipeline configuration
+# =============================================================================
+# Everything here can be overridden per-invocation with `--config file.yaml`
+# (deep-merged) or with environment variables of the form QB_<SECTION>_<KEY>,
+# e.g. QB_RENDER_DPI=300, QB_OCR_ENGINE=tesseract.
+
+paths:
+  data_dir: data
+  papers_dir: data/papers        # drop your PDFs here
+  questions_dir: data/questions  # question crops, one PNG per question
+  pages_dir: data/pages          # full-page renders (kept for review/cropping)
+  solutions_dir: data/solutions  # solution/answer crops
+  database: data/questionbank.db
+  exports_dir: data/exports
+
+render:
+  dpi: 200                      # question rendering resolution (math-safe)
+  detector_dpi: 150             # resolution used for the detection pass
+  colorspace: rgb
+  # Fraction of page height reserved for headers/footers when cropping
+  footer_margin_points: 30
+  header_margin_points: 30
+
+detect:
+  min_text_chars: 30            # minimum chars for the embedded text layer to be
+                                # trusted for layout detection (else OCR is used)
+  column_gap_fraction: 0.18     # min empty vertical strip (fraction of width)
+                                # that implies a two-column layout
+  max_question_number: 300
+  padding_points: 8             # extra margin around question crops (points)
+  # If a page has content but we could not extract any layout, the detector
+  # emits a whole-page "question" and flags it needs_review rather than
+  # silently inventing boundaries.
+  whole_page_fallback: true
+
+ocr:
+  engine: auto                  # auto | tesseract | embedded | none
+  language: eng
+  psm: 6                        # tesseract page-segmentation mode
+  # tesseract_binary: /usr/bin/tesseract   # set if not on PATH
+
+classify:
+  min_topic_confidence: 0.30    # below this -> topic stays null/"unknown"
+  min_course_confidence: 0.40
+  keywords_per_subtopic_weight: 1.0
+
+difficulty:
+  # weights for the difficulty model (1..5). See pipeline/difficulty.py
+  type_penalty_mcq: 0.7
+  type_bonus_extended: 0.8
+  marks_weight: 1.5
+  subpart_weight: 0.25
+  keyword_bonus: 0.4
+  length_bonus_words: 120
+  length_bonus: 0.4
+
+process:
+  # If true, already-processed PDFs (by sha256) are skipped; `--force` redoes them
+  resume: true
+  # Only run extraction on PDFs whose embedded text layer looks usable
+  require_layout: false
+
+uploads:
+  max_bytes: 26214400            # 25 MB per submitted PDF
+  max_pending: 10                # pending submissions per uploader
+  premium_gift_days: 14          # premium days granted on approval
+  require_copyright_ack: true

@@ -1,0 +1,12 @@
+{
+  "name": "99.95squad-site",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frontend smoke-test dependencies for the 99.95squad static site (jsdom). The site itself has no build step.",
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  },
+  "scripts": {
+    "test:dom": "node scripts/dom_smoke.js site/_site node_modules/jsdom"
+  }
+}

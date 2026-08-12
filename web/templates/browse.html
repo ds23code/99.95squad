@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Browse{% endblock %}
+{% block content %}
+<h1>Browse by subject</h1>
+<div class="grid">
+  {% for s in subjects %}
+  <div class="card">
+    <h2><a href="{{ url_for('index', subject=s.id) }}">{{ s.name }}</a></h2>
+    <p class="meta">{{ s.n }} questions</p>
+    <ul class="plain">
+      {% for c in courses if c.subject_id == s.id %}
+      <li><a href="{{ url_for('index', course=c.id) }}">{{ c.name }}</a> <span class="muted">({{ c.n }})</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% else %}
+  <p>No questions yet. Run <code>python -m pipeline process data/papers/</code> first.</p>
+  {% endfor %}
+</div>
+
+<h2>Popular topics</h2>
+<div class="chiprow">
+  {% for t in topics[:30] %}
+  <a class="chip" href="{{ url_for('index', topic=t.id) }}">{{ t.name }} <span class="muted">{{ t.n }}</span></a>
+  {% endfor %}
+</div>
+{% endblock %}

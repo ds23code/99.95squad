@@ -1,0 +1,389 @@
+# =============================================================================
+# Topic taxonomy (per course)
+# =============================================================================
+# Edit freely: add topics/subtopics and keywords.  Keywords are matched as
+# case-insensitive substrings against OCR / embedded text, so they can be
+# stem-ish fragments ("differentiat" matches "differentiate", "differentiation").
+# Empty keyword lists mean classification for that topic relies on subtopics only.
+#
+# After editing: python -m pipeline init   (re-seeds the taxonomy tables)
+
+courses:
+  mathematics-advanced:
+    - id: functions
+      name: Functions
+      keywords: [function, domain, range, graph, asymptote, inverse, sketch, mapping, relation, composite]
+      subtopics:
+        - id: domain-range
+          name: Domain and range
+          keywords: [domain, range, undefined, restriction]
+        - id: graphing
+          name: Graphing and transformations
+          keywords: [sketch, graph, transformation, translation, reflection, dilation, asymptote, intercept]
+        - id: inverse-functions
+          name: Inverse functions
+          keywords: [inverse, one-to-one, one to one]
+
+    - id: calculus
+      name: Calculus
+      keywords: [differentiat, integrat, derivative, gradient, tangent, curve, stationary, calculus, antiderivative, antidifferentiat]
+      subtopics:
+        - id: differentiation
+          name: Differentiation
+          keywords: [differentiat, derivative, gradient, tangent, normal, chain rule, product rule, quotient rule, first principles, power rule]
+        - id: integration
+          name: Integration
+          keywords: [integrat, integral, antidifferentiat, area under, definite, indefinite, trapezoidal, simpson]
+        - id: curve-sketching
+          name: Curve sketching
+          keywords: [stationary, turning point, point of inflection, concavity, maximum, minimum]
+        - id: rates-of-change
+          name: Rates of change
+          keywords: [rate of change, related rates, velocity, acceleration, displacement]
+
+    - id: trigonometry
+      name: Trigonometry
+      keywords: [trigonometr, sin, cos, tan, sine, cosine, tangent, radians, radian, amplitude, period, phase, unit circle, cosec, sec, cot]
+      subtopics:
+        - id: trig-functions
+          name: Trig functions
+          keywords: [sin, cos, tan, sine, cosine, amplitude, period, phase, graph]
+        - id: trig-equations
+          name: Trig equations and identities
+          keywords: [equation, identity, solve, general solution, exact value]
+        - id: trig-applications
+          name: Applications
+          keywords: [bearing, angle of elevation, angle of depression, triangle]
+
+    - id: statistics
+      name: Statistics
+      keywords: [statistic, mean, median, standard deviation, variance, normal, distribution, quartile, percentile, sample, z-score, data]
+      subtopics:
+        - id: univariate
+          name: Univariate data
+          keywords: [mean, median, mode, range, quartile, box plot, histogram, frequency, standard deviation, variance]
+        - id: normal-distribution
+          name: Normal distribution
+          keywords: [normal, distribution, z-score, bell, 68, 95, 99]
+        - id: bivariate
+          name: Bivariate data
+          keywords: [correlation, regression, scatter, bivariate, least squares, line of best fit]
+
+    - id: financial-mathematics
+      name: Financial Mathematics
+      keywords: [interest, compound, annuity, loan, investment, depreciation, repay, finance, future value, present value, superannuation]
+      subtopics:
+        - id: compound-interest
+          name: Compound interest
+          keywords: [compound, interest, future value, present value, rate]
+        - id: annuities-loans
+          name: Annuities and loans
+          keywords: [annuity, loan, repayment, superannuation, sinking fund]
+        - id: depreciation
+          name: Depreciation
+          keywords: [depreciation, declining balance, straight line]
+
+    - id: probability
+      name: Probability
+      keywords: [probability, chance, random, event, expectation, expected value, tree, venn, independent, mutually exclusive]
+      subtopics:
+        - id: basic-probability
+          name: Probability concepts
+          keywords: [probability, chance, event, outcome, tree, venn]
+        - id: continuous-random
+          name: Continuous random variables
+          keywords: [random variable, continuous, probability density, expectation]
+
+    - id: algebra
+      name: Algebra
+      keywords: [algebra, equation, inequality, factor, polynomial, quadratic, simultaneous, logarithm, log, exponential, index, surd]
+      subtopics:
+        - id: quadratics
+          name: Quadratics
+          keywords: [quadratic, parabola, discriminant, roots, completing the square]
+        - id: logarithms-exponentials
+          name: Logarithms and exponentials
+          keywords: [logarithm, log, exponential, e, decay, growth]
+        - id: polynomials
+          name: Polynomials
+          keywords: [polynomial, factor, remainder, degree, root]
+        - id: simultaneous
+          name: Simultaneous equations
+          keywords: [simultaneous, system of equations]
+
+    - id: sequences-series
+      name: Sequences and Series
+      keywords: [sequence, series, arithmetic, geometric, recurrence, sum, term, common difference, common ratio]
+      subtopics:
+        - id: arithmetic
+          name: Arithmetic sequences
+          keywords: [arithmetic, common difference, nth term]
+        - id: geometric
+          name: Geometric sequences
+          keywords: [geometric, common ratio, limiting sum, infinite]
+
+  mathematics-extension-1:
+    - id: calculus
+      name: Calculus
+      keywords: [differentiat, integrat, derivative, tangent, curve, calculus]
+      subtopics:
+        - id: further-differentiation
+          name: Further differentiation
+          keywords: [chain rule, implicit, exponential, logarithm]
+        - id: further-integration
+          name: Further integration
+          keywords: [integrat, substitution, partial fraction]
+
+    - id: combinatorics
+      name: Combinatorics
+      keywords: [permutation, combination, factorial, arrange, choose, pigeonhole]
+      subtopics:
+        - id: permutations
+          name: Permutations
+          keywords: [permutation, arrange, factorial, order]
+        - id: combinations
+          name: Combinations
+          keywords: [combination, choose, committee, selection]
+
+    - id: probability
+      name: Probability
+      keywords: [probability, binomial, conditional, expectation, distribution]
+      subtopics:
+        - id: binomial
+          name: Binomial distribution
+          keywords: [binomial, bernoulli, ncr, p q]
+
+    - id: polynomials
+      name: Polynomials
+      keywords: [polynomial, remainder theorem, factor theorem, roots, multiplicity]
+      subtopics:
+        - id: roots-polynomials
+          name: Roots of polynomials
+          keywords: [root, sum of roots, product of roots]
+
+    - id: vectors
+      name: Vectors
+      keywords: [vector, dot product, scalar, projection, magnitude, resultant]
+      subtopics:
+        - id: vector-basics
+          name: Vector operations
+          keywords: [vector, dot product, scalar product, magnitude, direction]
+
+    - id: trigonometric-equations
+      name: Trigonometry
+      keywords: [trigonometr, sin, cos, tan, identity, equation]
+      subtopics:
+        - id: trig-identities
+          name: Identities
+          keywords: [identity, double angle, compound angle, prove]
+
+  mathematics-extension-2:
+    - id: complex-numbers
+      name: Complex Numbers
+      keywords: [complex, imaginary, argand, modulus, argument, de moivre, conjugate, real part]
+      subtopics:
+        - id: complex-arithmetic
+          name: Complex arithmetic
+          keywords: [complex, imaginary, conjugate, modulus, argument]
+        - id: de-moivre
+          name: De Moivre's theorem
+          keywords: [de moivre, roots of unity, powers]
+
+    - id: proof
+      name: Proof
+      keywords: [proof, prove, induction, contradiction, counterexample]
+      subtopics:
+        - id: induction
+          name: Induction
+          keywords: [induction, inductive, base case, n=k]
+
+    - id: vectors
+      name: Vectors
+      keywords: [vector, cross product, triple product, geometric, resultant]
+      subtopics:
+        - id: vector-geometry
+          name: Vector geometry
+          keywords: [vector, cross product, plane, line, intersection]
+
+    - id: integration
+      name: Integration
+      keywords: [integrat, integral, substitution, partial fraction, area, volume]
+      subtopics:
+        - id: advanced-integration
+          name: Advanced integration
+          keywords: [integrat, substitution, partial fraction, by parts]
+
+    - id: mechanics
+      name: Mechanics
+      keywords: [mechanics, projectile, force, motion, velocity, acceleration, energy]
+      subtopics:
+        - id: projectile-motion
+          name: Projectile motion
+          keywords: [projectile, range, maximum height, trajectory]
+
+  mathematics-standard:
+    - id: algebra
+      name: Algebra
+      keywords: [algebra, equation, formula, rearrange, linear]
+      subtopics:
+        - id: linear-equations
+          name: Linear equations
+          keywords: [linear, equation, solve, rearrange]
+
+    - id: measurement
+      name: Measurement
+      keywords: [measurement, length, area, volume, perimeter, capacity, mass, unit]
+      subtopics:
+        - id: units
+          name: Units and conversions
+          keywords: [unit, convert, metric, kilometre, millimetre, litre]
+        - id: area-volume
+          name: Area and volume
+          keywords: [area, volume, surface area, capacity]
+
+    - id: financial-mathematics
+      name: Financial Mathematics
+      keywords: [interest, loan, tax, wage, salary, budget, compound, simple interest, earning]
+      subtopics:
+        - id: money
+          name: Money matters
+          keywords: [wage, salary, tax, budget, interest, loan, gst]
+
+    - id: statistics
+      name: Statistics
+      keywords: [statistic, mean, median, data, graph, survey, probability]
+      subtopics:
+        - id: data-analysis
+          name: Data analysis
+          keywords: [mean, median, mode, range, graph, frequency]
+        - id: probability
+          name: Probability
+          keywords: [probability, chance, relative frequency]
+
+  physics:
+    - id: kinematics
+      name: Kinematics
+      keywords: [velocity, acceleration, displacement, projectile, motion, speed, distance, time]
+      subtopics:
+        - id: linear-motion
+          name: Linear motion
+          keywords: [velocity, acceleration, displacement, speed]
+        - id: projectile-motion
+          name: Projectile motion
+          keywords: [projectile, range, trajectory, maximum height]
+
+    - id: dynamics
+      name: Dynamics
+      keywords: [force, newton, friction, tension, weight, mass, momentum, impulse, energy, work]
+      subtopics:
+        - id: forces
+          name: Forces
+          keywords: [force, newton, friction, tension, normal reaction]
+        - id: momentum-energy
+          name: Momentum and energy
+          keywords: [momentum, impulse, kinetic, potential, conservation]
+
+    - id: waves
+      name: Waves
+      keywords: [wave, frequency, wavelength, amplitude, sound, light, interference, diffraction, reflection, refraction]
+      subtopics:
+        - id: wave-properties
+          name: Wave properties
+          keywords: [wave, frequency, wavelength, amplitude, phase]
+
+    - id: electricity-magnetism
+      name: Electricity and Magnetism
+      keywords: [electric, current, voltage, resistance, circuit, charge, magnetic, field, induction, transformer]
+      subtopics:
+        - id: circuits
+          name: Circuits
+          keywords: [circuit, current, voltage, resistance, ohm, series, parallel]
+        - id: electromagnetism
+          name: Electromagnetism
+          keywords: [magnetic, field, induction, motor, generator, transformer]
+
+    - id: quantum-physics
+      name: Quantum Physics
+      keywords: [quantum, photon, planck, photoelectric, wave-particle, energy level]
+      subtopics:
+        - id: photoelectric
+          name: Photoelectric effect
+          keywords: [photoelectric, photon, work function, threshold]
+
+  chemistry:
+    - id: equilibrium
+      name: Equilibrium
+      keywords: [equilibrium, le chatelier, concentration, constant, yield]
+      subtopics:
+        - id: equilibrium-concepts
+          name: Equilibrium concepts
+          keywords: [equilibrium, le chatelier, shift]
+
+    - id: acids-bases
+      name: Acids and Bases
+      keywords: [acid, base, ph, titration, buffer, conjugate, neutralis]
+      subtopics:
+        - id: ph
+          name: pH and indicators
+          keywords: [ph, indicator, hydronium, hydroxide]
+        - id: titrations
+          name: Titrations
+          keywords: [titration, burette, endpoint, standard solution]
+
+    - id: organic-chemistry
+      name: Organic Chemistry
+      keywords: [organic, hydrocarbon, alkane, alkene, alcohol, ester, polymer, functional group]
+      subtopics:
+        - id: hydrocarbons
+          name: Hydrocarbons
+          keywords: [alkane, alkene, alkyne, hydrocarbon, isomer]
+        - id: reactions
+          name: Organic reactions
+          keywords: [alcohol, ester, fermentation, polymer, addition, substitution]
+
+    - id: chemical-reactions
+      name: Chemical Reactions
+      keywords: [reaction, redox, precipitation, mole, stoichio, yield, rate]
+      subtopics:
+        - id: stoichiometry
+          name: Stoichiometry
+          keywords: [mole, stoichio, molar, mass, volume, gas]
+        - id: rates
+          name: Reaction rates
+          keywords: [rate, collision theory, catalyst, concentration]
+
+  biology:
+    - id: cells
+      name: Cells
+      keywords: [cell, organelle, membrane, nucleus, mitosis, meiosis, prokaryote, eukaryote]
+      subtopics:
+        - id: cell-structure
+          name: Cell structure
+          keywords: [organelle, membrane, nucleus, cytoplasm]
+
+    - id: heredity
+      name: Heredity
+      keywords: [gene, allele, dna, inheritance, chromosome, mutation, phenotype, genotype, reproduction]
+      subtopics:
+        - id: dna
+          name: DNA and genes
+          keywords: [dna, gene, nucleotide, replication, protein synthesis]
+        - id: inheritance
+          name: Inheritance patterns
+          keywords: [allele, dominant, recessive, punnett, pedigree]
+
+    - id: evolution
+      name: Evolution
+      keywords: [evolution, natural selection, species, fossil, adaptation, darwin]
+      subtopics:
+        - id: natural-selection
+          name: Natural selection
+          keywords: [natural selection, adaptation, fitness]
+
+    - id: ecosystems
+      name: Ecosystems
+      keywords: [ecosystem, population, community, food web, energy flow, biodiversity, biotic, abiotic]
+      subtopics:
+        - id: ecology
+          name: Ecology
+          keywords: [population, community, food web, energy flow, carrying capacity]
