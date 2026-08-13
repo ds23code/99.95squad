@@ -44,10 +44,13 @@ const { JSDOM } = require(jsdomPath);
  * -------------------------------------------------------------------------- */
 function makeSupabaseMock() {
   const state = {
-    users: {},        // id -> {id, email, display_name, xp, level, daily_goal, opt_out_leaderboard, avatar_url}
+    users: {},        // id -> {id, email, display_name, xp, level, daily_goal, opt_out_leaderboard, avatar_url, is_admin, access_tier, premium_until, contribution_credits}
     attempts: [],     // {user_id, question_id, correct, seconds, mode, course_id, topic_id, difficulty, created_at, xp}
     comments: [],     // {id, question_id, user_id, parent_id, body, likes, created_at}
     likes: [],        // {user_id, comment_id}
+    submissions: [],  // {id, uploader, filename, name, sha256, size_bytes, status, note, storage_path, duplicate_of, duplicate_type, created_at}
+    objects: {},      // storagePath -> {owner}
+    audit: [],        // {created_at, actor, action, target_id, previous_status, new_status, notes}
     session: null,    // {access_token, user}
   };
   let seq = 1;
@@ -67,10 +70,24 @@ function makeSupabaseMock() {
     return streak;
   }
   function userById(uid) { return state.users[uid]; }
+  function seedAdmin() {
+    const uid = "user-admin-" + seq++;
+    const u = { id: uid, email: "admin@99.95squad.org", display_name: "Demo Moderator",
+                xp: 0, level: 1, daily_goal: 10, opt_out_leaderboard: false, avatar_url: null,
+                is_admin: true, access_tier: "admin", premium_until: null, contribution_credits: 0 };
+    state.users[uid] = u;
+    return u;
+  }
+  function adminOf(uid) { const u = userById(uid); return !!(u && u.is_admin); }
+  function audit(actor, action, targetId, prev, next, notes) {
+    state.audit.push({ created_at: now.toISOString(), actor: actor, action: action,
+      target_id: targetId, previous_status: prev, new_status: next, notes: notes || null });
+  }
   function seedUser() {
     const uid = "user-" + seq++;
     const u = { id: uid, email: "student@school.edu.au", display_name: "Demo Student",
-                xp: 0, level: 1, daily_goal: 10, opt_out_leaderboard: false, avatar_url: null };
+                xp: 0, level: 1, daily_goal: 10, opt_out_leaderboard: false, avatar_url: null,
+                is_admin: false, access_tier: "free", premium_until: null, contribution_credits: 0 };
     state.users[uid] = u;
     // seed 3 days of history so streak/calendar/leaderboard have data
     const hist = [
@@ -131,7 +148,16 @@ function makeSupabaseMock() {
   }
   function router(reqUrl, opts) {
     const url = new URL(reqUrl);
-    const body = opts.body ? JSON.parse(opts.body) : {};
+    /* RPC/JSON bodies are parsed; binary bodies (PDF uploads) are passed
+     * through untouched and never parsed. */
+    let body = {};
+    if (opts.body) {
+      if (typeof opts.body === "string") {
+        try { body = JSON.parse(opts.body); } catch (e) { body = { __raw: opts.body }; }
+      } else {
+        body = { __raw: opts.body };
+      }
+    }
     const auth = (opts.headers || {}).Authorization || "";
     const bearer = auth.replace("Bearer ", "");
     function requireUser() {
@@ -141,7 +167,8 @@ function makeSupabaseMock() {
     try {
       // ---- auth ----
       if (url.pathname === "/auth/v1/token" && url.searchParams.get("grant_type") === "password") {
-        const u = Object.values(state.users).find((x) => x.email === body.email) || seedUser();
+        const u = Object.values(state.users).find((x) => x.email === body.email)
+          || (body.email === "admin@99.95squad.org" ? seedAdmin() : seedUser());
         state.session = { access_token: "tok-" + u.id, user: { id: u.id, email: u.email, user_metadata: { name: u.display_name } } };
         return { status: 200, json: { access_token: state.session.access_token, user: state.session.user } };
       }
@@ -219,11 +246,154 @@ function makeSupabaseMock() {
           .map((c) => Object.assign({}, c, { display_name: userById(c.user_id).display_name }));
         return { status: 200, json: rows };
       }
-      if (url.pathname === "/rest/v1/favourites" && url.method === "GET") {
+      if (url.pathname === "/rest/v1/favourites" && (opts.method || "GET") === "GET") {
         return { status: 200, json: [] };
       }
-      if (url.pathname === "/rest/v1/favourites" && url.method === "POST") return { status: 200, json: [body] };
-      if (url.pathname === "/rest/v1/favourites" && url.method === "DELETE") return { status: 200, json: [] };
+      if (url.pathname === "/rest/v1/favourites" && (opts.method || "GET") === "POST") return { status: 200, json: [body] };
+      if (url.pathname === "/rest/v1/favourites" && (opts.method || "GET") === "DELETE") return { status: 200, json: [] };
+      // ---- profiles (own row readable; admin may read any) ----
+      if (url.pathname === "/rest/v1/profiles" && (opts.method || "GET") === "GET") {
+        const u = requireUser();
+        const qid = decodeURIComponent((url.searchParams.get("id") || "").replace(/^eq\./, ""));
+        const target = userById(qid);
+        if (!target) return { status: 200, json: [] };
+        if (target.id !== u.id && !adminOf(u.id)) return { status: 200, json: [] };
+        return { status: 200, json: [Object.assign({}, target, { email: target.email })].map((p) => ({
+          id: p.id, email: p.email, display_name: p.display_name, access_tier: p.access_tier,
+          is_admin: p.is_admin, daily_goal: p.daily_goal, opt_out_leaderboard: p.opt_out_leaderboard,
+          premium_until: p.premium_until, contribution_credits: p.contribution_credits, avatar_url: p.avatar_url,
+        })) };
+      }
+      // ---- upload submissions (RLS: own rows, or all rows for admins) ----
+      if (url.pathname === "/rest/v1/upload_submissions" && (opts.method || "GET") === "GET") {
+        const u = requireUser();
+        const rows = state.submissions.filter((s) => s.uploader === u.id || adminOf(u.id));
+        return { status: 200, json: rows };
+      }
+      if (url.pathname === "/rest/v1/upload_submissions" && (opts.method || "GET") === "POST") {
+        const u = requireUser();
+        if (body.uploader && body.uploader !== u.id) {
+          return { status: 403, json: { message: "new row violates row-level security policy" } };
+        }
+        if (body.storage_path && !body.storage_path.startsWith(u.id + "/")) {
+          return { status: 400, json: { message: "storage_path must be under your own folder" } };
+        }
+        const row = {
+          id: "sub-" + seq++, uploader: u.id, filename: body.filename || null, name: body.name || null,
+          sha256: body.sha256 || null, size_bytes: body.size_bytes || 0, status: "pending",
+          note: body.note || "Pending review", premium_granted: false, reviewed_at: null, reviewed_by: null,
+          duplicate_of: null, duplicate_type: null, storage_path: body.storage_path || null,
+          created_at: now.toISOString(),
+        };
+        state.submissions.push(row);
+        return { status: 201, json: row };
+      }
+      // ---- audit events (admins only) ----
+      if (url.pathname === "/rest/v1/audit_events" && (opts.method || "GET") === "GET") {
+        const u = requireUser();
+        if (!adminOf(u.id)) return { status: 200, json: [] };
+        const tid = decodeURIComponent((url.searchParams.get("target_id") || "").replace(/^eq\./, ""));
+        const rows = tid ? state.audit.filter((a) => a.target_id === tid) : state.audit.slice();
+        return { status: 200, json: rows };
+      }
+      // ---- moderation RPCs ----
+      if (url.pathname === "/rest/v1/rpc/is_admin") {
+        const u = requireUser();
+        return { status: 200, json: adminOf(u.id) };
+      }
+      if (url.pathname === "/rest/v1/rpc/admin_list_submissions") {
+        const u = requireUser();
+        if (!adminOf(u.id)) return { status: 403, json: { message: "not authorized" } };
+        const rows = state.submissions.slice().sort((a, b) => b.created_at.localeCompare(a.created_at)).map((s) => {
+          const owner = userById(s.uploader);
+          return Object.assign({}, s, { uploader_email: owner ? owner.email : null, uploader_name: owner ? owner.display_name : null });
+        });
+        return { status: 200, json: rows };
+      }
+      if (url.pathname === "/rest/v1/rpc/approve_upload") {
+        const u = requireUser();
+        if (!adminOf(u.id)) return { status: 403, json: { message: "not authorized" } };
+        const sub = state.submissions.find((s) => s.id === body.submission_id);
+        if (!sub) return { status: 400, json: { message: "submission not found" } };
+        const prev = sub.status;
+        if (sub.status !== "approved") {
+          sub.status = "approved"; sub.premium_granted = true;
+          sub.reviewed_at = now.toISOString(); sub.reviewed_by = u.id;
+          sub.duplicate_of = null; sub.duplicate_type = null;
+          const owner = userById(sub.uploader);
+          if (owner) {
+            owner.access_tier = "contributor";
+            owner.premium_until = new Date(now.getTime() + 14 * 86400000).toISOString();
+            owner.contribution_credits = (owner.contribution_credits || 0) + 1;
+          }
+        }
+        audit(u.id, "approve_upload", sub.id, prev, "approved", null);
+        return { status: 200, json: sub };
+      }
+      if (url.pathname === "/rest/v1/rpc/moderate_upload") {
+        const u = requireUser();
+        if (!adminOf(u.id)) return { status: 403, json: { message: "not authorized" } };
+        const sub = state.submissions.find((s) => s.id === body.submission_id);
+        if (!sub) return { status: 400, json: { message: "submission not found" } };
+        if (body.new_status === "approved") {
+          const prev = sub.status;
+          if (sub.status !== "approved") {
+            sub.status = "approved"; sub.premium_granted = true;
+            sub.reviewed_at = now.toISOString(); sub.reviewed_by = u.id;
+            sub.duplicate_of = null; sub.duplicate_type = null;
+            const owner = userById(sub.uploader);
+            if (owner) {
+              owner.access_tier = "contributor";
+              owner.premium_until = new Date(now.getTime() + 14 * 86400000).toISOString();
+              owner.contribution_credits = (owner.contribution_credits || 0) + 1;
+            }
+          }
+          audit(u.id, "approve_upload", sub.id, prev, "approved", null);
+          return { status: 200, json: sub };
+        }
+        const prev = sub.status;
+        sub.status = body.new_status;
+        sub.reviewed_at = now.toISOString(); sub.reviewed_by = u.id;
+        sub.note = body.p_notes != null ? body.p_notes : sub.note;
+        if (body.new_status === "duplicate") {
+          sub.duplicate_of = (body.p_duplicate_of || "").trim() || sub.duplicate_of;
+          sub.duplicate_type = (body.p_duplicate_type || "").trim() || sub.duplicate_type;
+        } else {
+          sub.duplicate_of = null; sub.duplicate_type = null;
+        }
+        audit(u.id, "moderate_upload", sub.id, prev, body.new_status, body.p_notes || null);
+        return { status: 200, json: sub };
+      }
+      // ---- private storage bucket ----
+      const storageMatch = url.pathname.match(/^\/storage\/v1\/object\/(sign\/)?paper-uploads\/(.+)$/);
+      if (storageMatch) {
+        const isSign = !!storageMatch[1];
+        const objPath = decodeURIComponent(storageMatch[2]);
+        if (isSign && (opts.method || "GET") === "POST") {
+          // Only the object owner or an admin may mint a signed link
+          // (mirrors the storage.objects SELECT policy).
+          const u = requireUser();
+          const obj = state.objects[objPath];
+          if (!obj) return { status: 400, json: { message: "Object not found" } };
+          if (obj.owner !== u.id && !adminOf(u.id)) return { status: 403, json: { message: "not authorized" } };
+          return { status: 200, json: { signedURL: "/storage/v1/object/sign/paper-uploads/" + objPath + "?token=test-token" } };
+        }
+        if (isSign && (opts.method || "GET") === "GET") {
+          // Signed URLs are accessed with the token in the URL, not a
+          // session header — mirror real Supabase Storage behaviour.
+          const obj = state.objects[objPath];
+          if (!obj) return { status: 404, json: {} };
+          return { status: 206, json: {} }; // Range probe: file exists and is readable
+        }
+        if (!isSign && (opts.method || "GET") === "POST") {
+          const u = requireUser();
+          const top = objPath.split("/")[0];
+          if (top !== u.id) return { status: 403, json: { message: "not authorized" } };
+          state.objects[objPath] = { owner: u.id };
+          return { status: 200, json: { Key: objPath } };
+        }
+        return { status: 404, json: { message: "mock: no storage route" } };
+      }
       return { status: 404, json: { message: "mock: no route " + url.pathname } };
     } catch (e) {
       return { status: 400, json: { message: e.message } };
@@ -509,6 +679,10 @@ async function main() {
   check("activity chart renders", !!$("#pr-activity svg"));
 
   // ---- upload flow ------------------------------------------------------------
+  // In supabase-mock mode the upload flow is exercised AFTER sign-in (see the
+  // moderation section) because the upload page now requires an account to
+  // accept files in Supabase mode. Here (stub/live) we exercise the full
+  // device-local validation pipeline.
   nav("#/upload");
   await waitFor(() => $("[id=dz]"), 8000, "upload page");
   // prime the published-hashes cache so we can exercise the duplicate path
@@ -539,33 +713,35 @@ async function main() {
     dz.dispatchEvent(dropEvent);
   }
 
-  // no copyright acknowledgement -> rejected
-  dropFile(goodPdf, false);
-  await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("authorised") !== -1, 8000, "ack required");
-  check("upload requires copyright acknowledgement", $("[id=dz-result]").textContent.indexOf("authorised") !== -1);
+  if (!supabaseMock) {
+    // no copyright acknowledgement -> rejected
+    dropFile(goodPdf, false);
+    await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("authorised") !== -1, 8000, "ack required");
+    check("upload requires copyright acknowledgement", $("[id=dz-result]").textContent.indexOf("authorised") !== -1);
 
-  // magic-byte check rejects non-PDFs
-  dropFile(badMagic, true);
-  await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("does not look like a PDF") !== -1, 8000, "magic rejected");
-  check("non-PDF rejected by magic bytes", $("[id=dz-result]").textContent.indexOf("does not look like a PDF") !== -1);
+    // magic-byte check rejects non-PDFs
+    dropFile(badMagic, true);
+    await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("does not look like a PDF") !== -1, 8000, "magic rejected");
+    check("non-PDF rejected by magic bytes", $("[id=dz-result]").textContent.indexOf("does not look like a PDF") !== -1);
 
-  // size limit
-  dropFile(tooBig, true);
-  await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("limit") !== -1, 8000, "size rejected");
-  check("oversize file rejected", $("[id=dz-result]").textContent.indexOf("limit") !== -1);
+    // size limit
+    dropFile(tooBig, true);
+    await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("limit") !== -1, 8000, "size rejected");
+    check("oversize file rejected", $("[id=dz-result]").textContent.indexOf("limit") !== -1);
 
-  // valid upload -> queued
-  dropFile(goodPdf, true);
-  await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("Queued") !== -1, 12000, "upload queued");
-  const dzText = $("[id=dz-result]") ? $("[id=dz-result]").textContent : "";
-  check("upload hashed + queued (not auto-published)", dzText.indexOf("Queued for review") !== -1, dzText.slice(0, 120));
-  const subs = window.QB.store.load().submissions;
-  check("submission stored with pending status", subs.length >= 1 && subs[0].status === "pending");
+    // valid upload -> queued
+    dropFile(goodPdf, true);
+    await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("Queued") !== -1, 12000, "upload queued");
+    const dzText = $("[id=dz-result]") ? $("[id=dz-result]").textContent : "";
+    check("upload hashed + queued (not auto-published)", dzText.indexOf("Queued for review") !== -1, dzText.slice(0, 120));
+    const subs = window.QB.store.load().submissions;
+    check("submission stored with pending status", subs.length >= 1 && subs[0].status === "pending");
 
-  // duplicate detection: a file whose hash matches a published paper
-  dropFile(dupPdf, true);
-  await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("already in the library") !== -1, 12000, "duplicate flagged");
-  check("duplicate upload flagged", $("[id=dz-result]").textContent.indexOf("already in the library") !== -1);
+    // duplicate detection: a file whose hash matches a published paper
+    dropFile(dupPdf, true);
+    await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("already in the library") !== -1, 12000, "duplicate flagged");
+    check("duplicate upload flagged", $("[id=dz-result]").textContent.indexOf("already in the library") !== -1);
+  }
 
   // ---- onboarding + Today dashboard -------------------------------------------
   nav("#/onboarding");
@@ -680,6 +856,85 @@ async function main() {
     const sylText = $("[id=syl-body]").textContent;
     check("syllabus: stage badges rendered", /Learning|Strong|Mastered/.test(sylText), sylText.slice(0, 120));
     check("syllabus: mastery stages counted", !!$(".syl-summary"));
+
+    // ---- uploads + moderation (supabase mode) ------------------------------
+    const studentId = mock.state.session.user.id;
+    nav("#/upload");
+    await waitFor(() => $("[id=dz]"), 8000, "upload page (mock)");
+    dropFile(fakePdf("Mock_High_2026_Physics_Trial.pdf", "%PDF-1.4 mock trial paper"), true);
+    await waitFor(() => $("[id=dz-result]") && $("[id=dz-result]").textContent.indexOf("Queued") !== -1, 12000, "upload queued (mock)");
+    const mySubs = mock.state.submissions.filter((s) => s.uploader === studentId);
+    check("moderation: PDF stored in private bucket", mySubs.length >= 1 && !!mock.state.objects[mySubs[0].storage_path]);
+    check("moderation: submission row references own storage path",
+      mySubs.length >= 1 && mySubs[0].storage_path.indexOf(studentId + "/") === 0, mySubs[0] && mySubs[0].storage_path);
+    check("moderation: new submission is pending (never pre-approved)",
+      mySubs.length >= 1 && mySubs[0].status === "pending" && mySubs[0].premium_granted === false);
+
+    // a student must never reach the moderation interface
+    nav("#/admin");
+    await waitFor(() => $(".empty-state h2"), 8000, "admin gate (student)");
+    check("moderation: student blocked from admin page",
+      !!$(".empty-state") && $(".empty-state").textContent.indexOf("Moderators only") !== -1);
+
+    // admin signs in and sees the student's submission with uploader info
+    await window.QB.auth.signOut();
+    await sleep(150);
+    nav("#/login");
+    await waitFor(() => $("[id=a-email]"), 8000, "login page (admin)");
+    $("[id=a-email]").value = "admin@99.95squad.org";
+    $("[id=a-pass]").value = "password123";
+    click($("[id=a-submit]"));
+    await waitFor(() => window.QB.auth.currentUser() != null, 8000, "admin signed in");
+    await sleep(200);
+    nav("#/admin");
+    await waitFor(() => $(".ad-table tbody tr"), 10000, "admin queue rows");
+    const adText = $(".ad-table").textContent;
+    check("moderation: admin sees student submission", adText.indexOf("Mock_High_2026_Physics_Trial.pdf") !== -1, adText.slice(0, 160));
+    check("moderation: uploader identity resolved", adText.indexOf("Demo Student") !== -1, adText.slice(0, 160));
+
+    // admin opens the PDF through a signed URL
+    click($('[data-pdf]'));
+    await waitFor(() => $(".pdf-frame") || $(".error-banner"), 10000, "pdf preview");
+    const pdfSrc = $(".pdf-frame") ? $(".pdf-frame").getAttribute("src") : "";
+    check("moderation: PDF preview via signed URL", pdfSrc.indexOf("token=") !== -1, pdfSrc);
+
+    // admin approves via the secure server RPC
+    click($('[data-open]'));
+    await waitFor(() => $("[id=ad-status]"), 8000, "detail form");
+    $("[id=ad-status]").value = "approved";
+    click($("[id=ad-apply]"));
+    await waitFor(() => mock.state.submissions.length >= 1 && mock.state.submissions[0].status === "approved", 8000, "submission approved");
+    check("moderation: approval recorded server-side", mock.state.submissions[0].status === "approved");
+    check("moderation: contributor premium granted server-side",
+      mock.state.users[studentId].access_tier === "contributor" &&
+      mock.state.users[studentId].contribution_credits === 1 &&
+      new Date(mock.state.users[studentId].premium_until) > new Date(),
+      JSON.stringify({ tier: mock.state.users[studentId].access_tier, credits: mock.state.users[studentId].contribution_credits }));
+    check("moderation: approval audited", mock.state.audit.some((a) => a.action === "approve_upload" && a.new_status === "approved"));
+
+    // the approved tab shows the approved row
+    nav("#/admin?view=approved");
+    await waitFor(() => $(".ad-table tbody tr"), 8000, "approved tab");
+    check("moderation: approved tab shows approved submission",
+      $(".ad-table").textContent.indexOf("Mock_High_2026_Physics_Trial.pdf") !== -1);
+
+    // sign back in as the student: they see their own status + premium
+    await window.QB.auth.signOut();
+    await sleep(150);
+    nav("#/login");
+    await waitFor(() => $("[id=a-email]"), 8000, "login page (student 2)");
+    $("[id=a-email]").value = "student@school.edu.au";
+    $("[id=a-pass]").value = "password123";
+    click($("[id=a-submit]"));
+    await waitFor(() => window.QB.auth.currentUser() != null, 8000, "student signed in (2)");
+    await sleep(400); // let refreshEntitlement fetch the profile
+    check("moderation: student entitlement upgraded after approval",
+      window.QB.auth.entitlement().isPremium === true &&
+      window.QB.auth.entitlement().tier === "contributor",
+      JSON.stringify(window.QB.auth.entitlement()));
+    nav("#/upload");
+    await waitFor(() => $("[id=up-list]") && $("[id=up-list]").textContent.indexOf("Approved") !== -1, 8000, "student sees approved status");
+    check("moderation: student sees own approved status", $("[id=up-list]").textContent.indexOf("Approved") !== -1);
   }
 
   // ---- live-only: every image the page actually rendered must have loaded --

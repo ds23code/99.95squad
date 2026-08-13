@@ -111,6 +111,13 @@ def test_dom_smoke_supabase_mock_mode(dom_site):
     assert "dashboard: activity calendar rendered" in result.stdout
     assert "leaderboard: rows ranked by XP" in result.stdout
     assert "comments: profanity filtered" in result.stdout
+    # upload → moderation → entitlement lifecycle
+    assert "moderation: PDF stored in private bucket" in result.stdout
+    assert "moderation: student blocked from admin page" in result.stdout
+    assert "moderation: admin sees student submission" in result.stdout
+    assert "moderation: PDF preview via signed URL" in result.stdout
+    assert "moderation: contributor premium granted server-side" in result.stdout
+    assert "moderation: student entitlement upgraded after approval" in result.stdout
 
 
 @pytest.mark.skipif(not _jsdom_available(), reason="jsdom not installed (npm install)")

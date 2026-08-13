@@ -105,8 +105,79 @@
       method: "POST",
       headers: Object.assign(headers(), { "Prefer": "return=representation" }),
       body: JSON.stringify(sub),
-    }).then(function (res) { return res.ok ? res.json() : null; })
-      .catch(function () { return null; });
+    }).then(function (res) {
+      if (!res.ok) return res.json().then(function (j) {
+        throw new Error(j.message || j.msg || "submission failed (HTTP " + res.status + ")");
+      });
+      return res.json();
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Uploaded paper PDFs (private Supabase Storage bucket "paper-uploads") */
+  /* ------------------------------------------------------------------ */
+
+  var STORAGE_BUCKET = "paper-uploads";
+
+  function storagePathEncode(path) {
+    /* encode each segment, keep "/" separators: {uid}/{file}.pdf */
+    return String(path || "").split("/").map(function (seg) {
+      return encodeURIComponent(seg);
+    }).join("/");
+  }
+
+  /* Upload the raw PDF bytes to the private bucket. The storage RLS policy
+   * only allows writes under the caller's own {uid}/ folder, so a client can
+   * never plant a file into another user's path. */
+  function uploadPdf(file, storagePath) {
+    return fetch(cfg().SUPABASE_URL + "/storage/v1/object/" + STORAGE_BUCKET + "/" + storagePathEncode(storagePath), {
+      method: "POST",
+      headers: Object.assign(headers(), { "Content-Type": "application/pdf", "x-upsert": "false" }),
+      body: file,
+    }).then(function (res) {
+      if (!res.ok) return res.json().then(function (j) {
+        throw new Error((j && (j.message || j.error)) || "PDF upload failed (HTTP " + res.status + ")");
+      });
+      return res.json();
+    });
+  }
+
+  /* Short-lived signed URL for a stored PDF. The Storage API only signs
+   * objects the caller may SELECT — owner or admin — so a student can never
+   * mint a link to someone else's file. Returns the absolute URL or null
+   * when the object does not exist / is not readable. */
+  function signUrl(storagePath, expiresSeconds) {
+    if (!storagePath) return Promise.resolve(null);
+    return fetch(cfg().SUPABASE_URL + "/storage/v1/object/sign/" + STORAGE_BUCKET + "/" + storagePathEncode(storagePath), {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ expiresIn: expiresSeconds || 3600 }),
+    }).then(function (res) {
+      if (!res.ok) return res.json().then(function (j) {
+        throw new Error((j && (j.message || j.error)) || "could not sign file (HTTP " + res.status + ")");
+      });
+      return res.json();
+    }).then(function (d) {
+      var u = d && d.signedURL;
+      if (!u) return null;
+      if (u.indexOf("http") === 0) return u;
+      return cfg().SUPABASE_URL + u;
+    }).catch(function (err) { throw err; });
+  }
+
+  /* Server-verified admin flag (never trust the localStorage cache alone). */
+  function isAdmin() {
+    if (provider() !== "supabase" || !currentUser()) return Promise.resolve(false);
+    return rpc("is_admin", {}).then(function (v) { return v === true; })
+      .catch(function () { return false; });
+  }
+
+  /* Enriched submission feed for the moderation UI (admins only). */
+  function adminListSubmissions() {
+    if (provider() !== "supabase" || !currentUser()) return Promise.resolve([]);
+    return rpc("admin_list_submissions").catch(function () {
+      /* older backend without the RPC: RLS still lets admins select all rows */
+      return sbListSubmissions();
+    });
   }
   function sbListSubmissions() {
     return fetch(cfg().SUPABASE_URL + "/rest/v1/upload_submissions?select=*&order=created_at.desc", {
@@ -114,14 +185,9 @@
     }).then(function (res) { return res.ok ? res.json() : []; })
       .catch(function () { return []; });
   }
-  function sbUpdateSubmission(id, patch) {
-    return fetch(cfg().SUPABASE_URL + "/rest/v1/upload_submissions?id=eq." + encodeURIComponent(id), {
-      method: "PATCH",
-      headers: Object.assign(headers(), { "Prefer": "return=representation" }),
-      body: JSON.stringify(patch),
-    }).then(function (res) { return res.ok ? res.json() : []; })
-      .catch(function () { return []; });
-  }
+  /* NOTE: there is deliberately no REST PATCH for upload_submissions —
+   * status changes only ever happen through the SECURITY DEFINER RPCs
+   * (approve_upload / moderate_upload), which is_admin() gates server-side. */
   function sbInsertReport(report) {
     return fetch(cfg().SUPABASE_URL + "/rest/v1/problem_reports", {
       method: "POST",
@@ -260,11 +326,17 @@
     return rpc("approve_upload", { submission_id: id });
   }
 
-  function moderateUpload(id, status, notes) {
+  function moderateUpload(id, status, notes, duplicateOf, duplicateType) {
     if (provider() !== "supabase" || !currentUser()) {
       return updateSubmission(id, { status: status, note: notes || null });
     }
-    return rpc("moderate_upload", { submission_id: id, new_status: status, p_notes: notes || null });
+    return rpc("moderate_upload", {
+      submission_id: id,
+      new_status: status,
+      p_notes: notes || null,
+      p_duplicate_of: duplicateOf || null,
+      p_duplicate_type: duplicateType || null,
+    });
   }
 
   function listAuditEvents(targetId) {
@@ -299,9 +371,34 @@
     var local = root.QB.store.addSubmission(sub);
     return Promise.resolve({ id: local.id, remote: false, sub: local });
   }
-  function updateSubmission(id, patch) {
+
+  /* Full upload lifecycle: store the PDF bytes in the private bucket, then
+   * register the submission row (the server forces status='pending' and
+   * validates the storage path). In device-local mode there is nowhere to
+   * store the bytes — the row is queued as before, clearly labelled. */
+  function submitPaper(file, sub) {
     if (provider() === "supabase" && currentUser()) {
-      return sbUpdateSubmission(id, patch).then(function (rows) { return rows[0] || patch; });
+      var uid = currentUser().id;
+      var suffix = (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : ("sub-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10));
+      var storagePath = uid + "/" + suffix + ".pdf";
+      return uploadPdf(file, storagePath).then(function () {
+        return sbInsertSubmission(Object.assign({ uploader: uid, storage_path: storagePath }, sub));
+      }).then(function (row) {
+        return { id: row && row.id, remote: true, sub: row };
+      });
+    }
+    var local = root.QB.store.addSubmission(sub);
+    return Promise.resolve({ id: local.id, remote: false, sub: local });
+  }
+  function updateSubmission(id, patch) {
+    /* Device-local mode only. In Supabase mode, status changes MUST go
+     * through the SECURITY DEFINER RPCs (approve_upload / moderate_upload);
+     * there is no direct UPDATE grant or policy on upload_submissions, so a
+     * REST PATCH would fail anyway — we never attempt it. */
+    if (provider() === "supabase" && currentUser()) {
+      return Promise.reject(new Error("submission status changes go through server RPCs only"));
     }
     root.QB.store.updateSubmission(id, patch);
     return Promise.resolve(patch);
@@ -430,6 +527,8 @@
     approveUpload: approveUpload, moderateUpload: moderateUpload,
     listAuditEvents: listAuditEvents, listProblemReports: listProblemReports,
     listSubmissions: listSubmissions, addSubmission: addSubmission,
-    updateSubmission: updateSubmission, addReport: addReport,
+    submitPaper: submitPaper, updateSubmission: updateSubmission, addReport: addReport,
+    uploadPdf: uploadPdf, signUrl: signUrl, isAdmin: isAdmin,
+    adminListSubmissions: adminListSubmissions, STORAGE_BUCKET: STORAGE_BUCKET,
   };
 })();

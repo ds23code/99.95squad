@@ -22,9 +22,11 @@ daily-question counter, analytics depth) and documents the enforcement point.
 1. Create a project at [supabase.com](https://supabase.com) (free tier is fine).
 2. Open the SQL editor and run [`site/backend/supabase.sql`](../site/backend/supabase.sql)
    — creates `profiles`, `attempts`, `xp_events`, `favourites`, `comments`,
-   `upload_submissions`, `problem_reports`, RLS policies and all SECURITY
+   `upload_submissions`, `problem_reports`, RLS policies, all SECURITY
    DEFINER functions (record_attempt, get_dashboard, topic_mastery,
-   daily_activity, time_stats, leaderboard, add_comment, …).
+   daily_activity, time_stats, leaderboard, add_comment, …) **and the private
+   `paper-uploads` storage bucket with its RLS policies** (uploaded PDFs are
+   stored there; only the owner and admins can read/sign them).
 3. **Authentication → Providers**: enable **Email** (required) and **Google**
    (set the Client ID + Client Secret from the Google Cloud console). Apple
    is optional and needs a paid Apple Developer account (Sign in with Apple
@@ -75,24 +77,33 @@ allow. **Never put the service-role key in the frontend.**
 - **Comments**: `add_comment()` enforces rate limits (10/hour) and a profanity
   filter; likes/reports/deletes go through SECURITY DEFINER functions; users
   can only delete their own comments.
-- **Contributions**: uploads insert with `status='pending'`; the admin page /
-  `approve_upload()` grants the 14-day premium entitlement server-side.
+- **Contributions**: the PDF bytes are stored in the private
+  `paper-uploads` bucket under `{your-uuid}/{submission-id}.pdf`, the row
+  inserts with `status='pending'` (forced by a trigger), and the admin page
+  (`#/admin`) lets moderators preview the PDF via a short-lived signed URL
+  and change status only through `approve_upload()` / `moderate_upload()` —
+  which grant the 14-day premium entitlement server-side.
 - The **admin page** (`#/admin`, visible to `is_admin` users) moderates
   uploads and comments.
 
 ## Processing approved uploads
 
-Approving a submission in the UI marks it approved and grants premium, but
-the PDF itself must still be turned into questions. Two options:
+Since the schema now stores the PDF bytes in the private `paper-uploads`
+bucket, you (the operator) can retrieve the original file directly from the
+admin UI at `#/admin` (View PDF → Open in new tab) or from the Supabase
+dashboard (Storage → paper-uploads → `{uploader-uuid}/{submission-uuid}.pdf`).
+The PDF must still be turned into questions. Two options:
 
 1. **Local pipeline (recommended for you as the operator):**
-   the upload page tells students to email you / you download the file, then:
+   download the file from the admin UI / dashboard, then:
    ```bash
    python -m pipeline uploads register submitted.pdf --uploader <student-id>
    python -m pipeline uploads approve <upload-id> --reviewer admin
    ```
    This runs the normal pipeline (render → detect → crop → OCR → classify),
-   links the paper, and grants the student premium.
+   links the paper, and grants the student premium. (If the pipeline machine
+   has access to the project, a future improvement can download the object
+   from the bucket automatically.)
 2. **Backend job:** a scheduled function watches for `approved` submissions
    and invokes the same pipeline on a worker. Schema is ready for this; the
    processing glue is the same `pipeline/uploads.py` code.
@@ -136,14 +147,30 @@ anything it cannot verify — it labels device-local mode honestly.
   `premium_until = greatest(coalesce(premium_until, now()), now() + 14 days)`
   inside the database and increments `contribution_credits` in the same
   transaction as the status change. The browser cannot influence it.
-- **Uploads cannot bypass moderation.** Students insert rows with
-  `status='pending'` only (RLS + the update policy restricts status changes
-  to moderators). The `limit_pending_uploads` trigger caps pending
+- **Uploads cannot bypass moderation.** The `harden_submission_insert`
+  trigger forces every new row to `status='pending'`,
+  `premium_granted=false`, no review fields, no duplicate markers, and
+  validates that `storage_path` (if given) starts with the uploader's own
+  folder — a student can never insert a pre-approved row or point the row
+  at someone else's file. The `limit_pending_uploads` trigger caps pending
   submissions at 10 and rejects files over 25 MB; the `rate_limit_uploads`
   trigger additionally caps submissions at 5 per user per rolling hour.
   The local pipeline mirrors the size + magic-byte checks, and the client
   enforces the same limits for UX — but the database triggers are the
   enforcement point.
+- **PDFs live in a private storage bucket.** `paper-uploads` is created by
+  the schema (private, 25 MB, PDF-only). Storage RLS lets a user write only
+  under `{their-uuid}/`, read (and sign) only their own objects, and lets
+  admins read/sign/delete anything in the bucket. The moderation UI opens
+  PDFs through short-lived signed URLs generated by the Storage API — the
+  bucket is never public and students can never enumerate or fetch another
+  student's file.
+- **Moderation RPCs are the only status path.** `approve_upload()` and
+  `moderate_upload()` are `SECURITY DEFINER`, gated on `is_admin()`, and
+  record every change in `audit_events`. `moderate_upload()` accepts
+  `duplicate_of` / `duplicate_type` for duplicate decisions and clears
+  duplicate markers on any non-duplicate decision. The frontend never
+  PATCHes `upload_submissions` directly (no UPDATE grant/policy exists).
 - **Admins are server-side.** `is_admin` is set by you in the database;
   moderator SQL functions check it with `SECURITY DEFINER`.
 - **Magic-byte + size checks** are mirrored in the local pipeline

@@ -69,7 +69,7 @@ python scripts/serve_site.py --port 8080      # http://localhost:8080
 | Search, filters, pagination | ✅ client-side (sharded + facet index) | ✅ same UI |
 | Practice, saved, progress, streaks | ✅ device-local | syncs to account |
 | Accounts / cross-device progress | ⚠️ needs Supabase (docs/AUTH.md) | ✅ |
-| Upload submissions + moderation | ⚠️ device-local or Supabase | ✅ real queue |
+| Upload submissions + moderation | ⚠️ device-local or Supabase | ✅ real queue + private PDF storage (`paper-uploads` bucket, signed-URL preview) |
 | Premium enforcement | ❌ UI gating only | ✅ server-side |
 | Search at 100k+ questions | ⚠️ still works, heavier | ✅ recommended |
 
