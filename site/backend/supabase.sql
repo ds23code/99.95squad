@@ -183,6 +183,15 @@ create table if not exists public.upload_submissions (
   year             integer,
   paper_type       text,
   storage_path     text,
+  paper_id         text,
+  processing_error text,
+  processing_attempts integer not null default 0,
+  processing_claim_id uuid,
+  processing_claim_expires_at timestamptz,
+  processing_started_at timestamptz,
+  processing_finished_at timestamptz,
+  publication_ready_at timestamptz,
+  question_count   integer,
   created_at       timestamptz not null default now()
 );
 
@@ -202,9 +211,21 @@ alter table public.upload_submissions add column if not exists course text;
 alter table public.upload_submissions add column if not exists year integer;
 alter table public.upload_submissions add column if not exists paper_type text;
 alter table public.upload_submissions add column if not exists storage_path text;
+alter table public.upload_submissions add column if not exists paper_id text;
+alter table public.upload_submissions add column if not exists processing_error text;
+alter table public.upload_submissions add column if not exists processing_attempts integer;
+alter table public.upload_submissions add column if not exists processing_claim_id uuid;
+alter table public.upload_submissions add column if not exists processing_claim_expires_at timestamptz;
+alter table public.upload_submissions add column if not exists processing_started_at timestamptz;
+alter table public.upload_submissions add column if not exists processing_finished_at timestamptz;
+alter table public.upload_submissions add column if not exists publication_ready_at timestamptz;
+alter table public.upload_submissions add column if not exists question_count integer;
 alter table public.upload_submissions add column if not exists created_at timestamptz;
 alter table public.upload_submissions alter column status set default 'pending';
 alter table public.upload_submissions alter column premium_granted set default false;
+alter table public.upload_submissions alter column processing_attempts set default 0;
+update public.upload_submissions set processing_attempts = 0 where processing_attempts is null;
+alter table public.upload_submissions alter column processing_attempts set not null;
 
 alter table public.upload_submissions
   drop constraint if exists upload_submissions_status_check;
@@ -214,6 +235,7 @@ alter table public.upload_submissions
   check (
     status in (
       'pending',
+      'queued',
       'processing',
       'approved',
       'rejected',
@@ -330,6 +352,15 @@ create index if not exists idx_upload_submissions_uploader
 
 create index if not exists idx_upload_submissions_status
   on public.upload_submissions (status, created_at desc);
+
+-- Quota triggers count active and recent rows per uploader. The partial index
+-- keeps the active count bounded as terminal submission history grows.
+create index if not exists idx_upload_submissions_active_quota
+  on public.upload_submissions (uploader)
+  where status in ('pending', 'queued', 'processing');
+
+create index if not exists idx_upload_submissions_hourly_quota
+  on public.upload_submissions (uploader, created_at desc);
 
 
 -- ============================================================================
@@ -1130,7 +1161,7 @@ end;
 $$;
 
 
-create or replace function public.approve_upload(submission_id uuid)
+create or replace function public.queue_upload(submission_id uuid)
 returns public.upload_submissions
 language plpgsql
 security definer
@@ -1144,56 +1175,215 @@ begin
     raise exception 'not authorized';
   end if;
 
-  select * into sub
-  from public.upload_submissions
-  where id = submission_id;
-
-  if sub is null then
-    raise exception 'submission not found';
+  select * into sub from public.upload_submissions
+  where id = submission_id for update;
+  if sub is null then raise exception 'submission not found'; end if;
+  if sub.status = 'approved' then return sub; end if;
+  if sub.status = 'queued' then return sub; end if;
+  if sub.status not in ('pending', 'needs_review', 'needs_changes') then
+    raise exception 'submission cannot be queued from status %', sub.status;
+  end if;
+  if sub.storage_path is null or trim(sub.storage_path) = '' then
+    raise exception 'submission has no stored PDF';
   end if;
 
   prev := sub.status;
-
-  if sub.status is distinct from 'approved' then
-    update public.upload_submissions
-    set
-      status = 'approved',
-      premium_granted = true,
-      reviewed_at = now(),
-      reviewed_by = auth.uid(),
-      duplicate_of = null,
-      duplicate_type = null
-    where id = submission_id;
-
-    if sub.uploader is not null then
-      update public.profiles
-      set
-        access_tier = 'contributor',
-        premium_until = greatest(
-          coalesce(premium_until, now()),
-          now() + interval '14 days'
-        ),
-        contribution_credits = contribution_credits + 1,
-        updated_at = now()
-      where id = sub.uploader;
-    end if;
-  end if;
+  update public.upload_submissions
+  set status = 'queued', reviewed_at = now(), reviewed_by = auth.uid(),
+      processing_error = null, processing_claim_id = null,
+      processing_claim_expires_at = null, processing_started_at = null,
+      processing_finished_at = null, duplicate_of = null, duplicate_type = null
+  where id = submission_id;
 
   insert into public.audit_events (actor, action, target_id, previous_status, new_status, notes)
-  values (
-    coalesce(auth.uid()::text, 'unknown'),
-    'approve_upload',
-    submission_id::text,
-    prev,
-    'approved',
-    null
-  );
+  values (auth.uid()::text, 'queue_upload', submission_id::text, prev, 'queued',
+          'approved by moderator; awaiting controlled processing');
 
   select * into sub from public.upload_submissions where id = submission_id;
   return sub;
 end;
 $$;
 
+-- Backwards-compatible signature. Approval now means authorising processing;
+-- it never grants premium or marks content approved before extraction succeeds.
+create or replace function public.approve_upload(submission_id uuid)
+returns public.upload_submissions
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Keep the compatibility wrapper independently protected as defence in
+  -- depth, even though queue_upload performs the same server-side check.
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+  return public.queue_upload(submission_id);
+end;
+$$;
+
+-- Remove obsolete pre-lease overloads from any partially deployed revision.
+drop function if exists public.claim_upload_for_processing(uuid);
+drop function if exists public.complete_upload_processing(uuid, text, integer);
+drop function if exists public.fail_upload_processing(uuid, text);
+
+create or replace function public.claim_upload_for_processing(
+  submission_id uuid,
+  p_claim_id uuid
+)
+returns public.upload_submissions
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  sub public.upload_submissions;
+  prev text;
+begin
+  if not public.is_admin() then raise exception 'not authorized'; end if;
+  if p_claim_id is null then raise exception 'claim id required'; end if;
+
+  select * into sub from public.upload_submissions
+  where id = submission_id for update;
+  if sub is null then raise exception 'submission not found'; end if;
+
+  -- Retrying the same request after a network timeout is safe. Returning an
+  -- approved row is limited to the retained owner token so a killed worker
+  -- can recognize that its completion transaction committed.
+  if sub.processing_claim_id = p_claim_id
+     and sub.status in ('processing', 'approved') then
+    return sub;
+  end if;
+  if sub.status <> 'queued' and not (
+    sub.status = 'processing'
+    and sub.processing_claim_expires_at is not null
+    and sub.processing_claim_expires_at <= now()
+  ) then
+    raise exception 'submission is not queued or its processing lease is active';
+  end if;
+
+  prev := sub.status;
+  update public.upload_submissions
+  set status = 'processing',
+      processing_attempts = processing_attempts + 1,
+      processing_claim_id = p_claim_id,
+      processing_claim_expires_at = now() + interval '6 hours',
+      processing_started_at = now(), processing_finished_at = null,
+      processing_error = null
+  where id = submission_id
+  returning * into sub;
+
+  insert into public.audit_events (actor, action, target_id, previous_status, new_status, notes)
+  values (auth.uid()::text, 'claim_upload_for_processing', submission_id::text,
+          prev, 'processing', case when prev = 'processing'
+            then 'reclaimed expired processing lease'
+            else 'controlled processor claimed selected submission' end);
+  return sub;
+end;
+$$;
+
+create or replace function public.complete_upload_processing(
+  submission_id uuid,
+  p_claim_id uuid,
+  p_paper_id text,
+  p_question_count integer default null
+)
+returns public.upload_submissions
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  sub public.upload_submissions;
+begin
+  if not public.is_admin() then raise exception 'not authorized'; end if;
+  if nullif(trim(p_paper_id), '') is null then raise exception 'paper id required'; end if;
+  if p_question_count is null or p_question_count <= 0 then
+    raise exception 'positive question count required';
+  end if;
+
+  select * into sub from public.upload_submissions
+  where id = submission_id for update;
+  if sub is null then raise exception 'submission not found'; end if;
+  if sub.status = 'approved'
+     and sub.paper_id = trim(p_paper_id)
+     and sub.processing_claim_id = p_claim_id then
+    return sub;
+  end if;
+  if sub.status <> 'processing' then
+    raise exception 'submission is not processing';
+  end if;
+  if sub.processing_claim_id is distinct from p_claim_id then
+    raise exception 'processing claim does not own this submission';
+  end if;
+
+  update public.upload_submissions
+  set status = 'approved', paper_id = trim(p_paper_id),
+      question_count = p_question_count, processing_error = null,
+      processing_finished_at = now(), publication_ready_at = now(),
+      -- Retain the successful owner token. A worker whose completion response
+      -- is lost can then prove that this exact transaction committed; claim
+      -- expiry is no longer meaningful once processing is terminal.
+      processing_claim_id = p_claim_id, processing_claim_expires_at = null,
+      reviewed_at = now(), reviewed_by = auth.uid(), premium_granted = true
+  where id = submission_id;
+
+  if sub.uploader is not null and not sub.premium_granted then
+    update public.profiles
+    set access_tier = 'contributor',
+        premium_until = greatest(coalesce(premium_until, now()), now()) + interval '14 days',
+        contribution_credits = contribution_credits + 1,
+        updated_at = now()
+    where id = sub.uploader;
+  end if;
+
+  insert into public.audit_events (actor, action, target_id, previous_status, new_status, notes)
+  values (auth.uid()::text, 'complete_upload_processing', submission_id::text,
+          'processing', 'approved', 'paper_id=' || trim(p_paper_id)
+          || coalesce(' questions=' || p_question_count::text, ''));
+
+  select * into sub from public.upload_submissions where id = submission_id;
+  return sub;
+end;
+$$;
+
+create or replace function public.fail_upload_processing(
+  submission_id uuid,
+  p_claim_id uuid,
+  p_error text
+)
+returns public.upload_submissions
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  sub public.upload_submissions;
+begin
+  if not public.is_admin() then raise exception 'not authorized'; end if;
+  select * into sub from public.upload_submissions
+  where id = submission_id for update;
+  if sub is null then raise exception 'submission not found'; end if;
+  if sub.status = 'needs_review' and sub.processing_claim_id = p_claim_id then return sub; end if;
+  if sub.status <> 'processing' then raise exception 'submission is not processing'; end if;
+  if sub.processing_claim_id is distinct from p_claim_id then
+    raise exception 'processing claim does not own this submission';
+  end if;
+
+  update public.upload_submissions
+  set status = 'needs_review', processing_error = left(coalesce(p_error, 'processing failed'), 4000),
+      processing_finished_at = now(), processing_claim_expires_at = now(),
+      publication_ready_at = null
+  where id = submission_id;
+
+  insert into public.audit_events (actor, action, target_id, previous_status, new_status, notes)
+  values (auth.uid()::text, 'fail_upload_processing', submission_id::text,
+          'processing', 'needs_review', left(coalesce(p_error, 'processing failed'), 1000));
+
+  select * into sub from public.upload_submissions where id = submission_id;
+  return sub;
+end;
+$$;
 
 create or replace function public.moderate_upload(
   submission_id uuid,
@@ -1221,24 +1411,30 @@ begin
     'needs_review',
     'needs_changes',
     'approved',
-    'pending',
-    'processing'
+    'pending'
   ) then
     raise exception 'invalid status';
   end if;
 
   select * into sub
   from public.upload_submissions
-  where id = submission_id;
+  where id = submission_id
+  for update;
 
   if sub is null then
     raise exception 'submission not found';
+  end if;
+  if sub.status = 'processing' then
+    raise exception 'active processing must finish through completion/failure RPC';
+  end if;
+  if sub.status = 'approved' and new_status <> 'approved' then
+    raise exception 'approved submission is immutable';
   end if;
 
   prev := sub.status;
 
   if new_status = 'approved' then
-    return public.approve_upload(submission_id);
+    return public.queue_upload(submission_id);
   end if;
 
   if new_status = 'duplicate' then
@@ -1492,14 +1688,33 @@ to authenticated;
 grant execute on function public.report_comment(bigint, text)
 to authenticated;
 
+revoke all on function public.queue_upload(uuid) from public, anon;
+revoke all on function public.approve_upload(uuid) from public, anon;
+revoke all on function public.claim_upload_for_processing(uuid, uuid) from public, anon;
+revoke all on function public.complete_upload_processing(uuid, uuid, text, integer) from public, anon;
+revoke all on function public.fail_upload_processing(uuid, uuid, text) from public, anon;
+revoke all on function public.moderate_upload(uuid, text, text, text, text) from public, anon;
+
+grant execute on function public.queue_upload(uuid)
+to authenticated;
+
 grant execute on function public.approve_upload(uuid)
+to authenticated;
+
+grant execute on function public.claim_upload_for_processing(uuid, uuid)
+to authenticated;
+
+grant execute on function public.complete_upload_processing(uuid, uuid, text, integer)
+to authenticated;
+
+grant execute on function public.fail_upload_processing(uuid, uuid, text)
 to authenticated;
 
 grant execute on function public.moderate_upload(uuid, text, text, text, text)
 to authenticated;
 
-grant execute on function public.admin_list_submissions()
-to authenticated;
+-- admin_list_submissions() is defined after storage policies below; its grant
+-- follows that definition so this file also works on a fresh project.
 
 grant execute on function public.is_admin()
 to authenticated;
@@ -1525,7 +1740,11 @@ values (
   26214400,                                  -- 25 MB, mirrors QB_CONFIG.upload.maxBytes
   array['application/pdf']
 )
-on conflict (id) do nothing;
+on conflict (id) do update set
+  name = excluded.name,
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 -- uploads: authenticated users may create objects ONLY under their own
 -- folder ({auth.uid()}/...) — nobody can write into another user's folder.
@@ -1583,6 +1802,15 @@ begin
   new.reviewed_by     := null;
   new.duplicate_of    := null;
   new.duplicate_type  := null;
+  new.paper_id        := null;
+  new.processing_error := null;
+  new.processing_attempts := 0;
+  new.processing_claim_id := null;
+  new.processing_claim_expires_at := null;
+  new.processing_started_at := null;
+  new.processing_finished_at := null;
+  new.publication_ready_at := null;
+  new.question_count := null;
   if new.note is null then
     new.note := 'Pending review';
   end if;
@@ -1613,6 +1841,19 @@ as $$
 declare
   pending_count integer;
 begin
+  if coalesce(new.uploader, auth.uid()) is null then
+    raise exception 'authenticated uploader required';
+  end if;
+  -- Serialize both quota checks for this uploader until the inserting
+  -- transaction commits. Concurrent requests therefore cannot all observe the
+  -- same pre-insert count and exceed either limit.
+  perform pg_advisory_xact_lock(
+    hashtextextended(
+      '99.95squad:upload-quota:' || coalesce(new.uploader, auth.uid())::text,
+      0
+    )
+  );
+
   if new.size_bytes is not null and new.size_bytes > 26214400 then
     raise exception 'file too large';
   end if;
@@ -1620,7 +1861,7 @@ begin
   select count(*) into pending_count
   from public.upload_submissions
   where uploader = coalesce(new.uploader, auth.uid())
-    and status in ('pending', 'processing');
+    and status in ('pending', 'queued', 'processing');
 
   if pending_count >= 10 then
     raise exception 'too many pending uploads';
@@ -1639,6 +1880,17 @@ as $$
 declare
   recent_count integer;
 begin
+  if coalesce(new.uploader, auth.uid()) is null then
+    raise exception 'authenticated uploader required';
+  end if;
+  -- Reentrant within this transaction and shared with the active-count trigger.
+  perform pg_advisory_xact_lock(
+    hashtextextended(
+      '99.95squad:upload-quota:' || coalesce(new.uploader, auth.uid())::text,
+      0
+    )
+  );
+
   select count(*) into recent_count
   from public.upload_submissions
   where uploader = coalesce(new.uploader, auth.uid())
@@ -1707,6 +1959,14 @@ begin
       s.year,
       s.paper_type,
       s.storage_path,
+      s.paper_id,
+      s.processing_error,
+      s.processing_attempts,
+      s.processing_claim_expires_at,
+      s.processing_started_at,
+      s.processing_finished_at,
+      s.publication_ready_at,
+      s.question_count,
       s.created_at,
       p.email         as uploader_email,
       p.display_name  as uploader_name
@@ -1717,6 +1977,10 @@ begin
   return result;
 end;
 $$;
+
+revoke all on function public.admin_list_submissions() from public, anon;
+grant execute on function public.admin_list_submissions()
+to authenticated;
 
 
 -- ============================================================================

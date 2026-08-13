@@ -27,7 +27,7 @@ Seeded from `config/subjects.yaml` + `config/topics.yaml` by
 ### papers
 | column | meaning |
 |---|---|
-| `id` | stable slug id: `<org>-<year>-<course>-<sha8>` |
+| `id` | stable slug id for new papers: `<org>-<year>-<course>-<sha16>`; existing full-SHA matches retain legacy IDs |
 | `sha256` | unique — dedupe & resume key |
 | `display_name`, `organisation`, `year`, `paper_type` | parsed from filename |
 | `subject_id`, `course_id`, `year_level` | metadata (may be null) |
@@ -41,8 +41,8 @@ One row per rendered page: `paper_id`, `page_number`, `image_path`, size.
 ### questions
 | column | meaning |
 |---|---|
-| `id` | stable: `<paper_id>-q<number>` |
-| `question_number`, `section`, `marks`, `subparts` | extraction results |
+| `id` | stable: `<paper_id>-q<number>`; repeated printed numbers append `--occurrence-N` |
+| `question_number`, `question_occurrence`, `section`, `marks`, `subparts` | extraction results and occurrence identity |
 | `page_start`, `page_end` | 1-based pages (multi-page questions: start≠end) |
 | `image_path`, `image_width/height` | **the canonical question image** |
 | `ocr_raw`, `ocr_clean`, `ocr_engine`, `ocr_confidence` | search text (never authoritative) |
@@ -56,8 +56,11 @@ One row per rendered page: `paper_id`, `page_number`, `image_path`, size.
 | `review_flags` | JSON array of human-readable flags |
 | `reviewed`, `reviewed_by`, `review_notes` | human review trail |
 
-Unique: `UNIQUE(paper_id, question_number, page_start)` — reprocessing a paper
-updates in place, it never duplicates.
+Logical identity is `UNIQUE(paper_id, question_number, question_occurrence)`.
+Occurrences are assigned in deterministic detector order, so numbering can
+restart within a section—even on the same page—without collisions. Reprocessing
+updates the same logical rows. A migrated row may retain its historical primary
+key; answer, solution, and FTS updates follow the persisted ID.
 
 ### answers / solutions
 `question_id` may be null when an answer/solution block could not be matched to
@@ -82,10 +85,17 @@ Human-readable and stable across reprocesses (as long as the file content is
 unchanged):
 
 ```
-trialmaths-2023-mathematics-advanced-bd1aa3de-q6
-└────────────┬───────────────────────┘ └─┬─┘
-      paper id (org-year-course-sha8)    question number
+trialmaths-2023-mathematics-advanced-bd1aa3de91f42c07-q6
+└────────────────────┬────────────────────────────┘ └─┬─┘
+       paper id (org-year-course-sha16)            printed number
+
+trialmaths-2023-mathematics-advanced-bd1aa3de91f42c07-q6--occurrence-2
+                                                                  └─────┬─────┘
+                                                          repeated number
 ```
+
+Paper IDs created by older versions can retain an eight-character digest; the
+full SHA-256 lookup ensures those IDs stay stable when the same PDF is rerun.
 
 ## Reading the data
 

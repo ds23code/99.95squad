@@ -28,14 +28,21 @@ your private database. It packages the committed sample content
 (`site/content_sample/`), so the public site always has content and the build
 is fast and deterministic.
 
+The Pages workflow also never migrates Supabase. Existing projects must apply
+`site/backend/migrations/20260813_upload_processing_lifecycle.sql` manually,
+once, before using queue/processing RPCs. This is a separate release action;
+see `docs/AUTH.md`. Never add an admin access token, refresh token,
+service-role key, or `sb_secret_...` key to GitHub Pages/Actions.
+
 ## Enabling Pages for your repo
 
-1. Push this repository to GitHub (branch `main`).
+1. Merge a reviewed feature-branch pull request into `main`; do not push
+   application changes directly to `main` merely to trigger a deployment.
 2. Go to **Settings → Pages** and set *Source* to **GitHub Actions**
    (the workflow uploads its own artifact; no branch-based Pages config).
-3. Push to `main` — the workflow runs and deploys.
-4. The site is live at `https://<user>.github.io/<repo>/`. Assets use
-   relative URLs, so the site works under the `/repo/` subpath automatically.
+3. The merge to `main` runs the workflow and deploys if all checks pass.
+4. The site is live at `https://<user>.github.io/<repo>/`. Assets and recovery
+   routing preserve the `/repo/` subpath.
 
 ## Publishing your real question library (optional, deliberate)
 
@@ -50,10 +57,10 @@ python -m pipeline export-static --out site/content --source full
 python scripts/build_site.py --out site/_site
 python scripts/serve_site.py --port 8080      # http://localhost:8080
 
-# 3. publish: push site/_site via a PR that makes the workflow copy it, OR
-#    — simpler and safer — add a small, deliberate step:
-#    move site/content into site/content_sample (replacing the demo) and
-#    commit ONLY the parts you are legally allowed to publish.
+# 3. publish deliberately: copy the reviewed export (or a reviewed subset)
+#    into the tracked site/content_sample source, inspect the full diff, and
+#    ship it in a separate PR. Do not commit site/_site; Actions rebuilds it.
+#    Commit ONLY material you are legally allowed to publish.
 ```
 
 > **Copyright & privacy.** Only publish question images and metadata you are
@@ -68,10 +75,10 @@ python scripts/serve_site.py --port 8080      # http://localhost:8080
 |---|---|---|
 | Search, filters, pagination | ✅ client-side (sharded + facet index) | ✅ same UI |
 | Practice, saved, progress, streaks | ✅ device-local | syncs to account |
-| Accounts / cross-device progress | ⚠️ needs Supabase (docs/AUTH.md) | ✅ |
-| Upload submissions + moderation | ⚠️ device-local or Supabase | ✅ real queue + private PDF storage (`paper-uploads` bucket, signed-URL preview) |
-| Premium enforcement | ❌ UI gating only | ✅ server-side |
-| Search at 100k+ questions | ⚠️ still works, heavier | ✅ recommended |
+| Accounts / cross-device progress | ✅ with Supabase (docs/AUTH.md) | ✅ |
+| Upload submissions + moderation | ✅ with Supabase RLS/RPCs + private Storage | ✅ alternative architecture |
+| Contributor/admin entitlement | ✅ server-side in Supabase; static content itself remains public | ✅ can gate content responses |
+| Search at 100k+ questions | ⚠️ browser-heavy; not the recommended production target | ✅ recommended |
 
 ### Search: static → backend swap
 
@@ -129,8 +136,10 @@ on any 404.
   (`--allow-quality-errors` to override, not recommended).
 - **Relative paths** — every asset reference is relative, so the site works
   under `https://<user>.github.io/<repo>/` with no base-URL config.
-- **404** — `404.html` is included for the SPA; hash routing means real
-  navigation never hits the server.
+- **Direct navigation/404 recovery** — `404.html` converts a Pages request
+  such as `/99.95squad/admin?view=queued` to the equivalent hash route while
+  preserving `/99.95squad/` and its query. Hash navigation then works on
+  refresh as well as through in-app links.
 - **Works without a local server** — the built site is plain static files;
   `scripts/serve_site.py` is only a local preview.
 

@@ -3,23 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>404 — 99.95squad</title>
-  <link rel="stylesheet" href="assets/css/app.css">
+  <title>Redirecting — 99.95squad</title>
 </head>
-<body class="standalone-page">
-  <main class="wrap center-page">
-    <div class="empty-state">
-      <div class="logo-mark lg" aria-hidden="true">
-        <svg viewBox="0 0 40 40" width="56" height="56"><use href="assets/img/logo.svg#mark"></use></svg>
-      </div>
-      <h1>404 — page not found</h1>
-      <p class="muted">That page doesn't exist (or the question id is wrong).</p>
-      <p>
-        <a class="btn" href="#/">Back to home</a>
-        <a class="btn ghost" href="#/browse">Browse questions</a>
-      </p>
-    </div>
-  </main>
-  <script>document.getElementById('year') && (document.getElementById('year').textContent = new Date().getFullYear());</script>
+<body>
+  <p>Redirecting to 99.95squad…</p>
+  <script>
+    /* GitHub Pages serves this file for direct/path refreshes. Convert the
+     * requested path to the app's hash route while preserving the repository
+     * base (/99.95squad/) and query string. No server rewrite is available. */
+    (function () {
+      var parts = location.pathname.split("/").filter(Boolean);
+      var onPages = /\.github\.io$/i.test(location.hostname);
+      var base = onPages && parts.length ? "/" + parts.shift() + "/" : "/";
+      var route = parts.join("/");
+      var hash = route ? "#/" + route + location.search : "#/";
+      location.replace(location.origin + base + hash);
+    })();
+  </script>
 </body>
 </html>

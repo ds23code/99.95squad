@@ -202,12 +202,18 @@ def discover_pdfs(papers_dir: str | Path) -> list[Path]:
 
 
 def paper_id_from_path(path: str | Path, meta: dict) -> str:
-    """Stable paper id: <org>-<year>-<course>-<sha8>."""
+    """Stable paper id: ``<org>-<year>-<course>-<sha16>``.
+
+    Sixteen hexadecimal characters give corpus-scale collision resistance while
+    keeping IDs readable. ``register_paper`` first looks up the full SHA-256, so
+    papers already stored under the former eight-character suffix retain their
+    existing IDs on every rerun.
+    """
     p = Path(path)
     org = re.sub(r"[^a-z0-9]+", "-", (meta.get("organisation") or "paper").lower()).strip("-")
     year = meta.get("year") or "yyyy"
     course = meta.get("course_id") or "unknown"
-    digest = sha256_of_file(p)[:8]
+    digest = sha256_of_file(p)[:16]
     return f"{org}-{year}-{course}-{digest}"
 
 

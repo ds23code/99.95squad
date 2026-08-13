@@ -263,12 +263,50 @@ def cmd_sample_content(args: argparse.Namespace, config: Config) -> int:
 
 
 def cmd_uploads(args: argparse.Namespace, config: Config) -> int:
+    from .uploads import (
+        RemoteUploadError,
+        SupabaseAdminClient,
+        approve_upload,
+        process_remote_upload,
+        register_upload,
+        set_upload_status,
+    )
+
+    action = args.action
+    if action == "process-remote":
+        if len(args.ids) != 1:
+            print("process-remote requires exactly one submission UUID", file=sys.stderr)
+            return 2
+        try:
+            client = SupabaseAdminClient.from_environment(session_file=args.session_file)
+            if client.session_file is None:
+                raise RemoteUploadError(
+                    "--session-file or SUPABASE_SESSION_FILE is required so rotated credentials survive restarts"
+                )
+            if not client.refresh_token:
+                raise RemoteUploadError(
+                    "the Supabase session file must contain a refresh token"
+                )
+            result = process_remote_upload(
+                config,
+                args.ids[0],
+                client,
+                export_out=args.export_out,
+                max_bytes=args.max_bytes,
+            )
+        except Exception as exc:
+            print(f"remote processing failed: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"approved {result['submission_id']} -> paper {result['paper_id']} "
+            f"({result['questions']} questions); validated export at {result['export_out']}"
+        )
+        return 0
+
     from .database import Database
-    from .uploads import approve_upload, register_upload, set_upload_status
 
     db = Database(config.paths["database"])
     db.init_schema()
-    action = args.action
 
     if action == "register":
         files = args.files if args.files is not None else args.ids
@@ -448,13 +486,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_sample_content)
 
     p = sub.add_parser("uploads", help="student upload moderation")
-    p.add_argument("action", choices=["register", "list", "approve", "reject", "duplicate", "needs_review", "pending", "processing"])
+    p.add_argument(
+        "action",
+        choices=[
+            "register", "list", "approve", "reject", "duplicate",
+            "needs_review", "pending", "processing", "process-remote",
+        ],
+    )
     p.add_argument("ids", nargs="*", help="upload ids (for register: PDF paths)")
     p.add_argument("--files", nargs="*", default=None, help="PDF paths for register")
     p.add_argument("--uploader", default="local", help="uploader id (register)")
     p.add_argument("--reviewer", default="admin", help="reviewer name")
     p.add_argument("--status", default=None, help="filter for list")
     p.add_argument("--notes", default=None, help="review notes")
+    p.add_argument(
+        "--export-out", default="site/content",
+        help="full static export destination after selected remote processing",
+    )
+    p.add_argument(
+        "--max-bytes", type=int, default=None,
+        help="override the configured private-PDF download limit",
+    )
+    p.add_argument(
+        "--session-file", default=None,
+        help=(
+            "absolute mode-0600 JSON path for the rotating admin session "
+            "(or set SUPABASE_SESSION_FILE)"
+        ),
+    )
     p.set_defaults(func=cmd_uploads)
 
     p = sub.add_parser("validate", help="run the validation suite (diverse papers -> report)")

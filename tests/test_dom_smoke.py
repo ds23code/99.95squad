@@ -116,8 +116,31 @@ def test_dom_smoke_supabase_mock_mode(dom_site):
     assert "moderation: student blocked from admin page" in result.stdout
     assert "moderation: admin sees student submission" in result.stdout
     assert "moderation: PDF preview via signed URL" in result.stdout
-    assert "moderation: contributor premium granted server-side" in result.stdout
+    assert "moderation: contributor premium granted only on completion" in result.stdout
     assert "moderation: student entitlement upgraded after approval" in result.stdout
+
+
+def test_github_pages_direct_route_recovery_smoke():
+    result = subprocess.run(
+        ["node", str(REPO_ROOT / "scripts" / "route_recovery_smoke.js")],
+        capture_output=True, text=True, cwd=REPO_ROOT, timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ROUTE RECOVERY SMOKE PASSED" in result.stdout
+    assert "query-bearing settings path" in result.stdout
+
+
+@pytest.mark.skipif(not _jsdom_available(), reason="jsdom not installed (npm install)")
+def test_auth_callback_and_session_restoration_smoke():
+    result = subprocess.run(
+        ["node", str(REPO_ROOT / "scripts" / "auth_smoke.js"), str(REPO_ROOT / "node_modules" / "jsdom")],
+        capture_output=True, text=True, cwd=REPO_ROOT, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "AUTH SMOKE PASSED" in result.stdout
+    assert "same-browser verifier" in result.stdout
+    assert "profiles.is_admin is hydrated" in result.stdout
+    assert "persisted session is validated" in result.stdout
 
 
 @pytest.mark.skipif(not _jsdom_available(), reason="jsdom not installed (npm install)")

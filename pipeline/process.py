@@ -8,7 +8,9 @@ Design goals:
 - one failing PDF never crashes the batch
 - already-processed PDFs are skipped (sha256) unless ``--force``
 - progress persists in the DB (paper status) so runs can be resumed
-- question ids are stable: ``<paper-id>-q<number>``
+- question identity is stable on ``(paper_id, printed number, occurrence)``;
+  the first ID is ``<paper-id>-q<number>`` and repeats append
+  ``--occurrence-N``
 """
 
 from __future__ import annotations
@@ -29,7 +31,12 @@ from .ingest import discover_pdfs, register_paper
 from .models import DetectionResult, PaperRecord, QuestionRegion, fallback_question_number
 from .ocr import clean_ocr, get_engine
 from .render import open_pdf, render_paper_pages, render_page_pil
-from .solutions import extract_solutions, question_id, split_inline_solution_crop
+from .solutions import (
+    extract_solutions,
+    occurrence_suffix,
+    question_id,
+    split_inline_solution_crop,
+)
 
 log = logging.getLogger(__name__)
 
@@ -181,9 +188,12 @@ def _process_paper(config: Config, db: Database, record: PaperRecord, pdf_path: 
 
         # ---------------- crop + OCR + classify ------------------------------
         log.debug("cropping %d questions", len(detection.questions))
+        # Include the content-addressed paper ID in the image directory.  A
+        # course/year/source directory can contain many papers whose question
+        # numbers restart at 1; number-only paths would overwrite one another.
         out_dir = config.course_data_dir(
             record.course_id or "unknown", record.year, record.organisation
-        )
+        ) / record.id
         out_dir.mkdir(parents=True, exist_ok=True)
 
         # page image lookup for question pages (only those needed)
@@ -203,24 +213,27 @@ def _process_paper(config: Config, db: Database, record: PaperRecord, pdf_path: 
         )
         paper_text = paper_text[:200_000]
 
-        questions_by_number: dict[str, QuestionRegion] = {}
+        questions_by_number: dict[str, list[QuestionRegion]] = {}
+        # Canonical IDs generated from the current paper identity can differ
+        # from primary keys retained by a migrated legacy database. Attachments
+        # must always follow the ID SQLite actually persisted.
+        persisted_question_ids: dict[str, str] = {}
         stored: list[str] = []
         for region in detection.questions:
             qnum = region.number
-            # unique key: if two regions share a number (sections), disambiguate
-            key = qnum
-            suffix = 2
-            while key in questions_by_number:
-                key = f"{qnum}-{suffix}"
-                suffix += 1
-            questions_by_number[key] = region
+            # Question numbers can restart in sections.  Their occurrence in
+            # deterministic detector order is part of the persistence identity.
+            occurrences = questions_by_number.setdefault(qnum, [])
+            occurrences.append(region)
+            occurrence = len(occurrences)
+            file_suffix = occurrence_suffix(occurrence)
 
             img = crop_question(region, pil_pages, dpi, padding)
             q_img, sol_img = split_inline_solution_crop(
                 img, region, pil_pages[region.page_start], dpi, padding
             )
 
-            q_file = out_dir / f"q{_q_number(qnum)}.png"
+            q_file = out_dir / f"q{_q_number(qnum)}{file_suffix}.png"
             q_img.save(q_file, format="PNG")
 
             # OCR (question image) -------------------------------------------
@@ -245,7 +258,7 @@ def _process_paper(config: Config, db: Database, record: PaperRecord, pdf_path: 
             # solution crop for inline solutions ------------------------------
             solution_image_path = None
             if sol_img is not None:
-                sol_file = out_dir / f"q{_q_number(qnum)}_solution.png"
+                sol_file = out_dir / f"q{_q_number(qnum)}{file_suffix}_solution.png"
                 sol_img.save(sol_file, format="PNG")
                 solution_image_path = str(sol_file)
 
@@ -255,12 +268,13 @@ def _process_paper(config: Config, db: Database, record: PaperRecord, pdf_path: 
                 status = "needs_review"
                 flags.append("low-extraction-confidence")
 
-            qid = question_id(record.id, qnum)
-            db.upsert_question(
+            qid = question_id(record.id, qnum, occurrence)
+            persisted_qid = db.upsert_question(
                 {
                     "id": qid,
                     "paper_id": record.id,
                     "question_number": qnum,
+                    "question_occurrence": occurrence,
                     "section": region.section,
                     "marks": region.marks,
                     "subparts": len(region.subparts) if region.subparts else None,
@@ -291,7 +305,8 @@ def _process_paper(config: Config, db: Database, record: PaperRecord, pdf_path: 
                     "review_flags": json.dumps(flags[:20]),
                 }
             )
-            stored.append(qid)
+            persisted_question_ids[qid] = persisted_qid
+            stored.append(persisted_qid)
             log.debug("  q%s -> %s (topic=%s, conf=%.2f)", qnum, q_file, classification.topic_id, region.confidence)
 
         # ---------------- solutions/answers ----------------------------------
@@ -306,9 +321,10 @@ def _process_paper(config: Config, db: Database, record: PaperRecord, pdf_path: 
             padding_points=padding,
         )
         for ans in answers:
+            attached_question_id = persisted_question_ids.get(ans.question_id, ans.question_id)
             db.upsert_answer(
                 {
-                    "question_id": ans.question_id,
+                    "question_id": attached_question_id,
                     "paper_id": record.id,
                     "answer_text": ans.answer_text,
                     "answer_type": "short",
@@ -317,12 +333,16 @@ def _process_paper(config: Config, db: Database, record: PaperRecord, pdf_path: 
                     "confidence": ans.confidence,
                 }
             )
-            if ans.question_id:
-                db.update_question_fields(ans.question_id, {"answer": ans.answer_text, "answer_source": "auto"})
+            if attached_question_id:
+                db.update_question_fields(
+                    attached_question_id,
+                    {"answer": ans.answer_text, "answer_source": "auto"},
+                )
         for sol in solutions:
+            attached_question_id = persisted_question_ids.get(sol.question_id, sol.question_id)
             db.upsert_solution(
                 {
-                    "question_id": sol.question_id,
+                    "question_id": attached_question_id,
                     "paper_id": record.id,
                     "image_path": sol.image_path,
                     "text": None,
@@ -330,8 +350,13 @@ def _process_paper(config: Config, db: Database, record: PaperRecord, pdf_path: 
                     "confidence": sol.confidence,
                 }
             )
-            if sol.question_id and not db.get_question(sol.question_id)["solution_image_path"]:
-                db.update_question_fields(sol.question_id, {"solution_image_path": sol.image_path})
+            attached_question = (
+                db.get_question(attached_question_id) if attached_question_id else None
+            )
+            if attached_question and not attached_question["solution_image_path"]:
+                db.update_question_fields(
+                    attached_question_id, {"solution_image_path": sol.image_path}
+                )
         if answers or solutions:
             db.exec("UPDATE papers SET has_solutions=1 WHERE id=?", (record.id,))
 
@@ -374,9 +399,9 @@ def _visual_whole_page_fallback(detection, doc, config: Config, dpi: int) -> Det
         img = render_page_pil(doc.load_page(i), dpi)
         if ink_ratio(img) < 0.01:
             continue  # visually blank page
-        # unique per-page number so question ids stay unique ("?p1", "?p2", …)
+        # Stable per-page number so question IDs survive reruns and parsing.
         region = QuestionRegion(
-            number=f"?p{i + 1}",
+            number=fallback_question_number(i + 1),
             page_start=i + 1,
             page_end=i + 1,
             y_top=0.0,

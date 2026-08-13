@@ -89,6 +89,8 @@ def test_question_id_numeric_and_fallback_unique():
 
     assert question_id("paper", "1") == "paper-q1"
     assert question_id("paper", "10") == "paper-q10"
+    assert question_id("paper", "1", 2) == "paper-q1--occurrence-2"
+    assert question_id("paper", "1", 3) != question_id("paper", "1", 2)
     a = question_id("paper", fallback_question_number(1))
     b = question_id("paper", fallback_question_number(2))
     assert a != b

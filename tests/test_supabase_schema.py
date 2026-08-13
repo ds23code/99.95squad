@@ -182,10 +182,23 @@ def test_comments_moderation_and_rate_limit():
     assert "create policy \"none direct\" on public.comments for insert with check (false)" in CODE
 
 
-def test_premium_entitlement_server_side():
-    assert "now() + interval '14 days'" in CODE
-    assert "contribution_credits = contribution_credits + 1" in CODE
-    assert "security definer" in CODE
+def test_premium_entitlement_server_side_after_completion():
+    queue = re.search(
+        r"create or replace function public\.queue_upload.*?\$\$;", CODE, re.S
+    ).group(0)
+    complete = re.search(
+        r"create or replace function public\.complete_upload_processing.*?\$\$;",
+        CODE,
+        re.S,
+    ).group(0)
+
+    # Moderation only queues the paper. Contributor credit is granted by the
+    # claim-protected completion transaction after publication succeeds.
+    assert "premium_until" not in queue
+    assert "contribution_credits" not in queue
+    assert "interval '14 days'" in complete
+    assert "contribution_credits = contribution_credits + 1" in complete
+    assert "security definer" in complete
 
 
 def test_indexes_for_scale():

@@ -68,8 +68,10 @@ Properties that make it scale:
   needs for the current page of results.
 - **Pagination** — filter-only browsing fetches shards incrementally until a
   page is full (no full-library download).
-- **Stable IDs** — `<org>-<year>-<course>-<sha8>-q<N>`; reprocessing never
-  changes ids, so saved/favourited questions stay valid.
+- **Stable IDs** — new paper IDs use
+  `<org>-<year>-<course>-<sha16>` (existing full-SHA matches retain their old
+  IDs). Question identity adds the printed number and occurrence; repeats use
+  `--occurrence-N`. Reprocessing does not change saved/favourited IDs.
 - **Compressed images** — cards use thumbnails (~3–7 KB), detail uses JPEG
   (~10–120 KB), zoom uses the original PNG; all lazy-loaded.
 - **Privacy by construction** — no PDFs, no original filenames, no raw OCR

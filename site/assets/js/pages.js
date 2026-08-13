@@ -514,9 +514,17 @@
       var p = isLogin ? auth.signIn(email, pass) : auth.signUp(email, pass, name);
       p.then(function (res) {
         if (!res.ok) { C.toast(res.error || "Something went wrong", "error"); return; }
+        if (res.requiresEmailConfirmation) {
+          C.toast("Check your email to confirm your account, then sign in.");
+          location.hash = "#/login";
+          return;
+        }
         C.toast(isLogin ? "Signed in" : "Account created");
+        if (res.warning) C.toast(res.warning, "error");
         if (!isLogin || auth.needsOnboarding()) location.hash = "#/onboarding";
         else location.hash = "#/dashboard";
+      }).catch(function (err) {
+        C.toast(err.message || "Authentication failed", "error");
       });
     });
   }
@@ -545,12 +553,12 @@
     backend.getDashboard().then(function (d) {
       if (!C.alive(C.$("#dash-body"))) return;
       if (!d || !d.profile) {
-        renderLocalFallback(app);
+        renderLocalFallback(app, new Error("The cloud dashboard response did not include your profile."));
         return;
       }
       renderBackendDashboard(app, d);
-    }).catch(function () {
-      renderLocalFallback(app);
+    }).catch(function (err) {
+      renderLocalFallback(app, err || new Error("The cloud dashboard request failed."));
     });
   }
 
@@ -709,11 +717,17 @@
 
   /* Honest device-local fallback (no backend): show the locally stored
    * practice history WITHOUT fabricating server-side stats. */
-  function renderLocalFallback(app) {
+  function renderLocalFallback(app, cloudError) {
     var stats = store.analytics();
     var st = store.load();
     var favs = st.favourites;
-    app.querySelector("#dash-body").innerHTML =
+    var warning = cloudError
+      ? '<div class="notice" id="dash-cloud-error" role="alert"><b>Cloud progress is temporarily unavailable.</b> ' +
+        'Showing only activity saved on this device; your cloud progress has not been treated as empty. ' +
+        '<span class="fine">' + C.escapeHtml(cloudError.message || "Dashboard request failed.") + '</span> ' +
+        '<button class="btn ghost sm" id="dash-cloud-retry" type="button">Retry cloud dashboard</button></div>'
+      : "";
+    app.querySelector("#dash-body").innerHTML = warning +
       '<div class="grid cols-4">' +
       '<div class="statcard"><div class="label">Questions (this device)</div><div class="value">' + stats.total + "</div></div>" +
       '<div class="statcard"><div class="label">Accuracy</div><div class="value">' + stats.accuracy + "%</div></div>" +
@@ -728,6 +742,8 @@
       '<div class="card"><h3>Recently viewed</h3><div id="dash-recent"></div></div>' +
       "</div>" +
       '<div class="card" style="margin-top:16px"><h3>Learning Insights</h3><div id="dash-insights"></div></div>';
+    var retry = app.querySelector("#dash-cloud-retry");
+    if (retry) retry.addEventListener("click", function () { dashboardPage(); });
     var recentEl = C.$("#dash-recent");
     recentEl.innerHTML = st.recent.length
       ? st.recent.slice(0, 5).map(function (id) { return '<p class="fine"><a href="#/question/' + encodeURIComponent(id) + '">View question</a></p>'; }).join("")
@@ -1758,6 +1774,9 @@
         return '<p style="margin:6px 0;font-size:13.5px">' + C.escapeHtml(s.filename || s.name || s.id) +
           " " + badgePill(s.status) + "</p>";
       }).join("");
+    }).catch(function (err) {
+      var el = C.$("#pr-subs");
+      if (C.alive(el)) el.innerHTML = '<div class="error-banner">Could not load contributions: ' + C.escapeHtml(err.message) + "</div>";
     });
 
     var outBtn = C.$("#pr-signout");
@@ -1972,23 +1991,31 @@
           return '<p style="margin:8px 0;font-size:13.5px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
             "<span>" + C.escapeHtml(s.filename || s.name || s.id) + "</span>" + badgePill(s.status) + "</p>";
         }).join("");
+      }).catch(function (err) {
+        if (C.alive(el)) el.innerHTML = '<div class="error-banner">Could not load submissions: ' + C.escapeHtml(err.message) + "</div>";
       });
     }
     // quota display
     auth.listSubmissions().then(function (subs) {
       var quotaEl = C.$("#up-quota");
       if (!C.alive(quotaEl)) return;
-      var pending = (subs || []).filter(function (s) { return s.status === "pending" || s.status === "processing"; }).length;
+      var pending = (subs || []).filter(function (s) {
+        return s.status === "pending" || s.status === "queued" || s.status === "processing";
+      }).length;
       var max = up.maxPending || 10;
       quotaEl.innerHTML = "Pending submissions: <strong>" + pending + " / " + max + "</strong>" +
         (pending >= max ? ' <span class="fine">(limit reached — wait for moderation)</span>' : "");
+    }).catch(function (err) {
+      var quotaEl = C.$("#up-quota");
+      if (C.alive(quotaEl)) quotaEl.innerHTML = '<span class="error-banner">Could not load quota: ' + C.escapeHtml(err.message) + "</span>";
     });
     renderSubmissions(C.$("#up-list"));
   }
 
   /* =================================================================== admin */
-  var ADMIN_STATUSES = ["pending", "processing", "needs_review", "needs_changes", "approved", "rejected", "duplicate"];
-  var ADMIN_QUEUE_STATUSES = ["pending", "processing", "needs_review", "needs_changes"];
+  var ADMIN_STATUSES = ["pending", "queued", "processing", "needs_review", "needs_changes", "approved", "rejected", "duplicate"];
+  var ADMIN_ACTION_STATUSES = ["pending", "needs_review", "needs_changes", "approved", "rejected", "duplicate"];
+  var ADMIN_QUEUE_STATUSES = ["pending", "queued", "processing", "needs_review", "needs_changes"];
 
   function adminPage() {
     var app = C.$("#app");
@@ -2035,13 +2062,14 @@
 
   function adminRowActions(s) {
     var buttons = [];
+    if (s.status === "processing" || s.status === "approved") return "";
     var acts = [
-      ["approve", "Approve", "btn sm ok", s.status !== "approved"],
-      ["reject", "Reject", "btn sm danger", s.status !== "rejected"],
+      ["approved", "Approve & queue", "btn sm ok", s.status !== "queued"],
+      ["rejected", "Reject", "btn sm danger", s.status !== "rejected"],
       ["duplicate", "Duplicate", "btn sm", s.status !== "duplicate"],
       ["needs_review", "Needs review", "btn sm ghost", s.status !== "needs_review"],
       ["needs_changes", "Request changes", "btn sm ghost", s.status !== "needs_changes"],
-      ["pending", "Move to queue", "btn sm ghost", s.status !== "pending" && s.status !== "processing"],
+      ["pending", "Return to pending", "btn sm ghost", s.status !== "pending"],
     ];
     acts.forEach(function (a) {
       if (a[3]) buttons.push('<button class="' + a[2] + '" data-quick="' + a[0] + '" data-id="' + C.escapeHtml(s.id) + '">' + a[1] + "</button>");
@@ -2060,12 +2088,12 @@
 
     app.innerHTML =
       "<h1 class='page-title'>Moderator</h1>" +
-      '<p class="page-sub">Review student uploads. Approval and every status change go through secure server RPCs — students can never change their own status, and PDFs are opened via short-lived signed URLs.</p>' +
+      '<p class="page-sub">Review student uploads. “Approve & queue” authorises one selected PDF for controlled processing; premium is granted only after extraction succeeds. Every status change uses secure server RPCs, and PDFs open via short-lived signed URLs.</p>' +
       (opts.local
         ? '<div class="notice">Device-local mode — you are managing submissions stored in this browser. ' +
           "PDFs are not stored in this mode; connect Supabase (docs/AUTH.md) for the full storage + moderation workflow. " +
           "Promote a moderator with <code>update profiles set is_admin = true where id = '&lt;uuid&gt;'</code>.</div>"
-        : '<div class="notice ok">Signed in as a moderator. Actions call <code>approve_upload()</code> and <code>moderate_upload()</code> server-side.</div>') +
+        : '<div class="notice ok">Signed in as a moderator. Approval calls <code>queue_upload()</code>; the controlled local CLI processes that selected submission and only then completes approval.</div>') +
       '<div class="tabs" id="ad-tabs">' +
       [["queue", "Queue"], ["approved", "Approved"], ["rejected", "Rejected / duplicates"], ["history", "Review history"]].map(function (t) {
         return '<a href="#/admin?view=' + t[0] + '"' + (view === t[0] ? ' class="active"' : "") + ">" + t[1] + "</a>";
@@ -2220,15 +2248,26 @@
         (s.duplicate_of ? "<div class='wide'><span class='label'>Duplicate of</span><code>" + C.escapeHtml(s.duplicate_of) + "</code>" +
           (s.duplicate_type ? " <span class='fine muted'>(" + C.escapeHtml(s.duplicate_type) + ")</span>" : "") + "</div>" : "") +
         (s.storage_path ? "<div class='wide'><span class='label'>Stored at</span><code>" + C.escapeHtml(s.storage_path) + "</code></div>" : "") +
+        (s.paper_id ? "<div><span class='label'>Published paper</span><code>" + C.escapeHtml(s.paper_id) + "</code></div>" : "") +
+        (s.question_count != null ? "<div><span class='label'>Questions</span>" + C.escapeHtml(s.question_count) + "</div>" : "") +
+        (s.processing_attempts ? "<div><span class='label'>Processing attempts</span>" + C.escapeHtml(s.processing_attempts) + "</div>" : "") +
         "</div>" +
+        (s.processing_error ? "<div class='error-banner'><b>Last processing error:</b> " + C.escapeHtml(s.processing_error) + "</div>" : "") +
         (s.note && s.note !== "Pending review" ? "<p class='fine'><span class='label'>Notes</span> " + C.escapeHtml(s.note) + "</p>" : "") +
         '<div class="actions" style="margin:10px 0">' +
         '<button class="btn sm" id="ad-view-pdf" data-pdf="' + C.escapeHtml(s.id) + '">View PDF</button>' +
         "</div>" +
-        '<form id="ad-form" class="ad-form">' +
+        ((s.status === "processing" || s.status === "approved")
+          ? '<div class="notice">' + (s.status === "processing"
+              ? "This submission is owned by the controlled processor. Completion or failure is reported by the CLI; other transitions are locked."
+              : "This submission is published and immutable. Premium was granted only after successful extraction and export validation.") + "</div>"
+          : '<form id="ad-form" class="ad-form">' +
         '<div class="form-row"><label for="ad-status">Change status</label>' +
-        '<select id="ad-status">' + ADMIN_STATUSES.map(function (st) {
-          return '<option value="' + st + '"' + (s.status === st ? " selected" : "") + ">" + adminStatusLabel(st) + "</option>";
+        '<select id="ad-status" required>' +
+        (ADMIN_ACTION_STATUSES.indexOf(s.status) === -1 ? '<option value="" selected disabled>Choose an action…</option>' : "") +
+        ADMIN_ACTION_STATUSES.map(function (st) {
+          var label = st === "approved" ? "Approve & queue processing" : adminStatusLabel(st);
+          return '<option value="' + st + '"' + (s.status === st ? " selected" : "") + ">" + label + "</option>";
         }).join("") + "</select></div>" +
         '<div class="form-row" id="ad-dup-row" hidden>' +
         '<label for="ad-dup-of">Duplicate of (paper ID or submission ID)</label>' +
@@ -2241,7 +2280,7 @@
         '<div class="form-row"><label for="ad-note">Review notes (visible to the uploader)</label>' +
         '<textarea id="ad-note" placeholder="e.g. low scan quality, missing cover page, typo in metadata…">' + C.escapeHtml(s.note || "") + "</textarea></div>" +
         '<button class="btn" id="ad-apply" type="submit">Apply status change</button>' +
-        "</form>" +
+        "</form>") +
         '<div id="ad-history"><p class="muted fine">Loading review history…</p></div>';
       var pdfBtn = C.$("#ad-view-pdf", box);
       if (pdfBtn) pdfBtn.addEventListener("click", function () { openPdfViewer(s); });
@@ -2267,11 +2306,15 @@
             " · " + C.escapeHtml(r.previous_status || "—") + " → " + C.escapeHtml(r.new_status || r.action) +
             (r.notes ? " — " + C.escapeHtml(r.notes) : "") + "</p>";
         }).join("");
+      }).catch(function (err) {
+        var h = C.$("#ad-history");
+        if (C.alive(h)) h.innerHTML = '<div class="error-banner">Could not load review history: ' + C.escapeHtml(err.message) + "</div>";
       });
     }
 
     function applyStatus(s) {
       var status = C.$("#ad-status").value;
+      if (!status) { C.toast("Choose a moderation action", "error"); return; }
       var note = (C.$("#ad-note").value || "").trim();
       var dupOf = (C.$("#ad-dup-of") ? C.$("#ad-dup-of").value : "").trim();
       var dupType = (C.$("#ad-dup-type") ? C.$("#ad-dup-type").value : "").trim();
@@ -2281,8 +2324,9 @@
         ? auth.approveUpload(s.id)
         : auth.moderateUpload(s.id, status, note, dupOf || null, dupType || null);
       op.then(function () {
-        C.toast("Marked " + adminStatusLabel(status));
-        if (status === "approved") auth.refreshEntitlement().catch(function () {});
+        C.toast(status === "approved"
+          ? "Approved for controlled processing — premium is granted after extraction succeeds"
+          : "Marked " + adminStatusLabel(status));
         var card = C.$("#ad-detail-card");
         if (card) card.hidden = true;
         reload();
@@ -2372,6 +2416,9 @@
               C.escapeHtml(r.details || "") + "</p>";
           }).join("")
         : '<p class="muted fine">No problem reports yet.</p>';
+    }).catch(function (err) {
+      var el = C.$("#ad-reports");
+      if (C.alive(el)) el.innerHTML = '<div class="error-banner">Could not load reports: ' + C.escapeHtml(err.message) + "</div>";
     });
   }
 

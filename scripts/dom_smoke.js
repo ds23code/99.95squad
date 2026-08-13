@@ -43,15 +43,22 @@ const { JSDOM } = require(jsdomPath);
  * the frontend never computes or stores them itself.
  * -------------------------------------------------------------------------- */
 function makeSupabaseMock() {
+  function jwt(role, exp) {
+    function part(value) { return Buffer.from(JSON.stringify(value)).toString("base64url"); }
+    return part({ alg: "none", typ: "JWT" }) + "." + part({ role: role, exp: exp }) + ".mock";
+  }
   const state = {
     users: {},        // id -> {id, email, display_name, xp, level, daily_goal, opt_out_leaderboard, avatar_url, is_admin, access_tier, premium_until, contribution_credits}
     attempts: [],     // {user_id, question_id, correct, seconds, mode, course_id, topic_id, difficulty, created_at, xp}
     comments: [],     // {id, question_id, user_id, parent_id, body, likes, created_at}
+    reports: [],      // {id, reporter, question_id, reason, details, created_at}
     likes: [],        // {user_id, comment_id}
     submissions: [],  // {id, uploader, filename, name, sha256, size_bytes, status, note, storage_path, duplicate_of, duplicate_type, created_at}
     objects: {},      // storagePath -> {owner}
     audit: [],        // {created_at, actor, action, target_id, previous_status, new_status, notes}
-    session: null,    // {access_token, user}
+    session: null,    // normalized rotating auth session
+    authCalls: { user: 0, refresh: 0 },
+    dashboardFailuresRemaining: 0,
   };
   let seq = 1;
   const now = new Date();
@@ -167,15 +174,43 @@ function makeSupabaseMock() {
     try {
       // ---- auth ----
       if (url.pathname === "/auth/v1/token" && url.searchParams.get("grant_type") === "password") {
+        if (body.password === "wrong-password") {
+          return { status: 400, json: { message: "Invalid login credentials" } };
+        }
         const u = Object.values(state.users).find((x) => x.email === body.email)
           || (body.email === "admin@99.95squad.org" ? seedAdmin() : seedUser());
-        state.session = { access_token: "tok-" + u.id, user: { id: u.id, email: u.email, user_metadata: { name: u.display_name } } };
-        return { status: 200, json: { access_token: state.session.access_token, user: state.session.user } };
+        const exp = Math.floor(Date.now() / 1000) + 3600;
+        state.session = {
+          access_token: jwt("authenticated", exp), refresh_token: "refresh-" + seq++,
+          expires_in: 3600, expires_at: exp, token_type: "bearer",
+          user: { id: u.id, email: u.email, user_metadata: { name: u.display_name } },
+        };
+        return { status: 200, json: state.session };
+      }
+      if (url.pathname === "/auth/v1/token" && url.searchParams.get("grant_type") === "refresh_token") {
+        if (!state.session || body.refresh_token !== state.session.refresh_token) {
+          return { status: 400, json: { message: "Invalid Refresh Token" } };
+        }
+        state.authCalls.refresh++;
+        const exp = Math.floor(Date.now() / 1000) + 3600;
+        state.session = Object.assign({}, state.session, {
+          access_token: jwt("authenticated", exp), refresh_token: "refresh-" + seq++,
+          expires_in: 3600, expires_at: exp,
+        });
+        return { status: 200, json: state.session };
+      }
+      if (url.pathname === "/auth/v1/signup") {
+        const u = Object.values(state.users).find((x) => x.email === body.email) || seedUser();
+        u.email = body.email;
+        u.display_name = (body.data && body.data.name) || u.display_name;
+        return { status: 200, json: { user: { id: u.id, email: u.email, user_metadata: body.data || {} } } };
       }
       if (url.pathname === "/auth/v1/user") {
-        if (!state.session) return { status: 401, json: {} };
+        state.authCalls.user++;
+        if (!state.session || state.session.access_token !== bearer) return { status: 401, json: { message: "invalid session" } };
         return { status: 200, json: state.session.user };
       }
+      if (url.pathname === "/auth/v1/logout") return { status: 204, json: null };
       // ---- rpc ----
       if (url.pathname === "/rest/v1/rpc/record_attempt") {
         const u = requireUser();
@@ -189,7 +224,13 @@ function makeSupabaseMock() {
           streak: streakFor(u.id), xp_today: state.attempts.filter((a) => a.user_id === u.id && key(new Date(a.created_at)) === key(now)).reduce((s, a) => s + a.xp, 0),
           questions_today: state.attempts.filter((a) => a.user_id === u.id && key(new Date(a.created_at)) === key(now)).length } };
       }
-      if (url.pathname === "/rest/v1/rpc/get_dashboard") return { status: 200, json: dashboard(body.p_user) };
+      if (url.pathname === "/rest/v1/rpc/get_dashboard") {
+        if (state.dashboardFailuresRemaining > 0) {
+          state.dashboardFailuresRemaining--;
+          return { status: 503, json: { message: "mock cloud dashboard outage" } };
+        }
+        return { status: 200, json: dashboard(body.p_user) };
+      }
       if (url.pathname === "/rest/v1/rpc/topic_mastery") {
         const u = userById(body.p_user); if (!u) return { status: 200, json: [] };
         return { status: 200, json: dashboard(body.p_user).mastery };
@@ -251,6 +292,17 @@ function makeSupabaseMock() {
       }
       if (url.pathname === "/rest/v1/favourites" && (opts.method || "GET") === "POST") return { status: 200, json: [body] };
       if (url.pathname === "/rest/v1/favourites" && (opts.method || "GET") === "DELETE") return { status: 200, json: [] };
+      if (url.pathname === "/rest/v1/problem_reports" && (opts.method || "GET") === "POST") {
+        const u = requireUser();
+        if (body.reporter !== u.id) return { status: 403, json: { message: "not authorized" } };
+        const row = Object.assign({ id: seq++, created_at: now.toISOString() }, body);
+        state.reports.push(row);
+        return { status: 201, json: [row] };
+      }
+      if (url.pathname === "/rest/v1/problem_reports" && (opts.method || "GET") === "GET") {
+        const u = requireUser();
+        return { status: 200, json: state.reports.filter((r) => r.reporter === u.id || adminOf(u.id)) };
+      }
       // ---- profiles (own row readable; admin may read any) ----
       if (url.pathname === "/rest/v1/profiles" && (opts.method || "GET") === "GET") {
         const u = requireUser();
@@ -310,24 +362,19 @@ function makeSupabaseMock() {
         });
         return { status: 200, json: rows };
       }
-      if (url.pathname === "/rest/v1/rpc/approve_upload") {
+      if (url.pathname === "/rest/v1/rpc/queue_upload" || url.pathname === "/rest/v1/rpc/approve_upload") {
         const u = requireUser();
         if (!adminOf(u.id)) return { status: 403, json: { message: "not authorized" } };
         const sub = state.submissions.find((s) => s.id === body.submission_id);
         if (!sub) return { status: 400, json: { message: "submission not found" } };
-        const prev = sub.status;
-        if (sub.status !== "approved") {
-          sub.status = "approved"; sub.premium_granted = true;
-          sub.reviewed_at = now.toISOString(); sub.reviewed_by = u.id;
-          sub.duplicate_of = null; sub.duplicate_type = null;
-          const owner = userById(sub.uploader);
-          if (owner) {
-            owner.access_tier = "contributor";
-            owner.premium_until = new Date(now.getTime() + 14 * 86400000).toISOString();
-            owner.contribution_credits = (owner.contribution_credits || 0) + 1;
-          }
+        if (sub.status === "processing" || sub.status === "approved") {
+          return { status: 409, json: { message: "active or published submissions are immutable" } };
         }
-        audit(u.id, "approve_upload", sub.id, prev, "approved", null);
+        const prev = sub.status;
+        sub.status = "queued"; sub.premium_granted = false;
+        sub.reviewed_at = now.toISOString(); sub.reviewed_by = u.id;
+        sub.processing_error = null; sub.duplicate_of = null; sub.duplicate_type = null;
+        audit(u.id, "queue_upload", sub.id, prev, "queued", null);
         return { status: 200, json: sub };
       }
       if (url.pathname === "/rest/v1/rpc/moderate_upload") {
@@ -336,19 +383,14 @@ function makeSupabaseMock() {
         const sub = state.submissions.find((s) => s.id === body.submission_id);
         if (!sub) return { status: 400, json: { message: "submission not found" } };
         if (body.new_status === "approved") {
-          const prev = sub.status;
-          if (sub.status !== "approved") {
-            sub.status = "approved"; sub.premium_granted = true;
-            sub.reviewed_at = now.toISOString(); sub.reviewed_by = u.id;
-            sub.duplicate_of = null; sub.duplicate_type = null;
-            const owner = userById(sub.uploader);
-            if (owner) {
-              owner.access_tier = "contributor";
-              owner.premium_until = new Date(now.getTime() + 14 * 86400000).toISOString();
-              owner.contribution_credits = (owner.contribution_credits || 0) + 1;
-            }
+          if (sub.status === "processing" || sub.status === "approved") {
+            return { status: 409, json: { message: "active or published submissions are immutable" } };
           }
-          audit(u.id, "approve_upload", sub.id, prev, "approved", null);
+          const prev = sub.status;
+          sub.status = "queued"; sub.premium_granted = false;
+          sub.reviewed_at = now.toISOString(); sub.reviewed_by = u.id;
+          sub.processing_error = null; sub.duplicate_of = null; sub.duplicate_type = null;
+          audit(u.id, "queue_upload", sub.id, prev, "queued", null);
           return { status: 200, json: sub };
         }
         const prev = sub.status;
@@ -376,7 +418,7 @@ function makeSupabaseMock() {
           const obj = state.objects[objPath];
           if (!obj) return { status: 400, json: { message: "Object not found" } };
           if (obj.owner !== u.id && !adminOf(u.id)) return { status: 403, json: { message: "not authorized" } };
-          return { status: 200, json: { signedURL: "/storage/v1/object/sign/paper-uploads/" + objPath + "?token=test-token" } };
+          return { status: 200, json: { signedURL: "/object/sign/paper-uploads/" + objPath + "?token=test-token" } };
         }
         if (isSign && (opts.method || "GET") === "GET") {
           // Signed URLs are accessed with the token in the URL, not a
@@ -443,6 +485,16 @@ if (liveBase) {
   }, true);
 }
 
+function fetchResponse(status, data) {
+  const text = data == null ? "" : JSON.stringify(data);
+  return {
+    ok: status >= 200 && status < 300,
+    status: status,
+    json: () => Promise.resolve(data),
+    text: () => Promise.resolve(text),
+  };
+}
+
 let mock = null;
 if (supabaseMock) {
   // turn on the backend + point it at the in-memory mock
@@ -452,14 +504,14 @@ if (supabaseMock) {
     const abs = String(url);
     if (abs.indexOf("mock.supabase.co") !== -1) {
       const res = mock.router(abs, { method: opts.method || "GET", headers: opts.headers || {}, body: opts.body });
-      return Promise.resolve({ ok: res.status < 400, status: res.status, json: () => Promise.resolve(res.json) });
+      return Promise.resolve(fetchResponse(res.status, res.json));
     }
     // static content from disk (stub)
     const clean = abs.replace(/^https:\/\/example\.com\//, "").replace(/^\.\//, "");
     const file = path.join(siteDir, decodeURIComponent(clean.split("?")[0]));
     return fs.promises.readFile(file).then(
-      (buf) => ({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(buf.toString("utf8"))) }),
-      () => ({ ok: false, status: 404, json: () => Promise.resolve({}) })
+      (buf) => fetchResponse(200, JSON.parse(buf.toString("utf8"))),
+      () => fetchResponse(404, {})
     );
   };
 } else if (liveBase) {
@@ -526,6 +578,13 @@ async function main() {
   await waitFor(() => $(".hero h1"), 8000, "landing hero");
   check("landing page renders hero", !!$(".hero h1"));
   check("landing shows question stats", !!$(".hero-stats .stat-num"));
+
+  // Header Subjects is a query-bearing settings route (a previous exact-route
+  // matcher incorrectly sent this link to the in-app 404 page).
+  nav("#/settings?tab=subjects");
+  await waitFor(() => $("#st-tabs .active"), 8000, "subjects settings route");
+  check("Subjects navigation opens the subjects settings tab",
+    $("#st-tabs .active") && $("#st-tabs .active").textContent === "Subjects");
 
   // ---- browse: text search ----------------------------------------------
   nav("#/browse?q=normal+distribution");
@@ -679,10 +738,14 @@ async function main() {
   check("activity chart renders", !!$("#pr-activity svg"));
 
   // ---- upload flow ------------------------------------------------------------
+  // Student uploads require an account in every provider. In local smoke mode,
+  // create one first; Supabase mode exercises signup/session semantics below.
+  if (!supabaseMock) {
+    const signup = await window.QB.auth.signUp("student@school.edu.au", "password123", "Demo Student");
+    check("sign-up creates a local authenticated account", signup.ok && !!window.QB.auth.currentUser());
+  }
   // In supabase-mock mode the upload flow is exercised AFTER sign-in (see the
-  // moderation section) because the upload page now requires an account to
-  // accept files in Supabase mode. Here (stub/live) we exercise the full
-  // device-local validation pipeline.
+  // moderation section). Here (stub/live) we exercise validation and queueing.
   nav("#/upload");
   await waitFor(() => $("[id=dz]"), 8000, "upload page");
   // prime the published-hashes cache so we can exercise the duplicate path
@@ -758,15 +821,17 @@ async function main() {
     check("dashboard renders after onboarding", window.document.body.textContent.indexOf("Continue practising") !== -1);
   }
 
-  // ---- login (device-local mode) ----------------------------------------------
+  // ---- login (device-local or Supabase mock) -----------------------------------
+  await window.QB.auth.signOut();
   nav("#/login");
   await waitFor(() => $("[id=a-email]"), 8000, "login page");
   $("[id=a-email]").value = "student@school.edu.au";
   $("[id=a-pass]").value = "password123";
   click($("[id=a-submit]"));
   await waitFor(() => $("[id=nav-account]") && $("[id=nav-account]").textContent.indexOf("dashboard") !== -1, 8000, "signed in");
+  await waitFor(() => window.location.hash === "#/dashboard", 8000, "post-login navigation");
   const user = window.QB.auth.currentUser();
-  check("sign-in works (local provider)", !!(user && user.email === "student@school.edu.au"));
+  check("sign-in works with the configured auth provider", !!(user && user.email === "student@school.edu.au"));
 
   // ---- 404 ---------------------------------------------------------------------
   nav("#/definitely-not-a-page");
@@ -790,6 +855,12 @@ async function main() {
     // sign-out then sign-in again proves the full auth lifecycle
     await window.QB.auth.signOut();
     check("auth: sign-out clears session", window.QB.auth.currentUser() == null);
+    const pendingSignup = await window.QB.auth.signUp("pending@school.edu.au", "password123", "Pending Student");
+    check("auth: confirmation-pending signup is not treated as signed in",
+      pendingSignup.ok && pendingSignup.requiresEmailConfirmation && window.QB.auth.currentUser() == null);
+    const badLogin = await window.QB.auth.signIn("student@school.edu.au", "wrong-password");
+    check("auth: login surfaces Supabase credential errors",
+      badLogin.ok === false && badLogin.error.indexOf("Invalid login credentials") !== -1, badLogin.error);
     nav("#/login");
     await waitFor(() => $("[id=a-email]"), 8000, "login page (mock)");
     $("[id=a-email]").value = "student@school.edu.au";
@@ -797,6 +868,17 @@ async function main() {
     click($("[id=a-submit]"));
     await waitFor(() => window.QB.auth.currentUser() != null, 8000, "signed in (mock)");
     check("auth: sign-in creates session", !!window.QB.auth.currentUser());
+    const persisted = window.QB.auth.currentSession();
+    persisted.expires_at = Math.floor(Date.now() / 1000) - 1;
+    window.localStorage.setItem("qb.supabase.session", JSON.stringify(persisted));
+    const refreshBefore = mock.state.authCalls.refresh;
+    await Promise.all([window.QB.auth.refreshSession(false), window.QB.auth.refreshSession(false)]);
+    const refreshed = window.QB.auth.currentSession();
+    check("auth: concurrent refresh is serialized",
+      mock.state.authCalls.refresh === refreshBefore + 1,
+      "refresh calls=" + (mock.state.authCalls.refresh - refreshBefore));
+    check("auth: rotated refresh token is persisted",
+      refreshed.refresh_token === mock.state.session.refresh_token && refreshed.refresh_token !== persisted.refresh_token);
     await sleep(300); // let any trailing navigation settle before the question visit
 
     // record an attempt on a question -> server XP feedback
@@ -819,6 +901,24 @@ async function main() {
     check("dashboard: activity calendar rendered", !!$("[id=dash-cal] .cal-grid"));
     check("dashboard: mastery list rendered", $("[id=dash-mastery]") && $("[id=dash-mastery]").textContent.indexOf("Calculus") !== -1);
     check("dashboard: achievements rendered", !!$("[id=dash-achievements]") && $("[id=dash-achievements]").textContent.indexOf("First steps") !== -1);
+
+    // A cloud outage must not masquerade as a genuinely empty dashboard.
+    mock.state.dashboardFailuresRemaining = 1;
+    nav("#/browse");
+    await sleep(100);
+    nav("#/dashboard");
+    await waitFor(() => $("[id=dash-cloud-error]"), 8000, "dashboard cloud error");
+    const outageText = $("[id=dash-cloud-error]") ? $("[id=dash-cloud-error]").textContent : "";
+    check("dashboard outage: cloud error is visibly distinct from empty progress",
+      outageText.indexOf("Cloud progress is temporarily unavailable") !== -1 &&
+      outageText.indexOf("mock cloud dashboard outage") !== -1, outageText);
+    check("dashboard outage: fallback is explicitly device-local",
+      $("[id=dash-body]").textContent.indexOf("Questions (this device)") !== -1 &&
+      $("[id=dash-body]").textContent.indexOf("your cloud progress has not been treated as empty") !== -1);
+    click($("[id=dash-cloud-retry]"));
+    await waitFor(() => $("[id=dash-cal] .cal-grid"), 10000, "dashboard cloud retry");
+    check("dashboard outage: retry restores the cloud dashboard",
+      !$("[id=dash-cloud-error]") && !!$("[id=dash-cal] .cal-grid"));
 
     // leaderboard
     nav("#/leaderboard");
@@ -898,25 +998,72 @@ async function main() {
     const pdfSrc = $(".pdf-frame") ? $(".pdf-frame").getAttribute("src") : "";
     check("moderation: PDF preview via signed URL", pdfSrc.indexOf("token=") !== -1, pdfSrc);
 
-    // admin approves via the secure server RPC
+    // Admin approval is queueing only. Extraction/export completion is a
+    // separate authenticated processor action and is the entitlement gate.
     click($('[data-open]'));
     await waitFor(() => $("[id=ad-status]"), 8000, "detail form");
     $("[id=ad-status]").value = "approved";
     click($("[id=ad-apply]"));
-    await waitFor(() => mock.state.submissions.length >= 1 && mock.state.submissions[0].status === "approved", 8000, "submission approved");
-    check("moderation: approval recorded server-side", mock.state.submissions[0].status === "approved");
-    check("moderation: contributor premium granted server-side",
-      mock.state.users[studentId].access_tier === "contributor" &&
-      mock.state.users[studentId].contribution_credits === 1 &&
-      new Date(mock.state.users[studentId].premium_until) > new Date(),
-      JSON.stringify({ tier: mock.state.users[studentId].access_tier, credits: mock.state.users[studentId].contribution_credits }));
-    check("moderation: approval audited", mock.state.audit.some((a) => a.action === "approve_upload" && a.new_status === "approved"));
+    await waitFor(() => mock.state.submissions.length >= 1 && mock.state.submissions[0].status === "queued", 8000, "submission queued");
+    check("moderation: approval queues processing server-side", mock.state.submissions[0].status === "queued");
+    check("moderation: queueing does not grant contributor entitlement",
+      mock.state.users[studentId].access_tier === "free" &&
+      mock.state.users[studentId].contribution_credits === 0 &&
+      mock.state.submissions[0].premium_granted === false);
+    check("moderation: queue action audited", mock.state.audit.some((a) => a.action === "queue_upload" && a.new_status === "queued"));
 
-    // the approved tab shows the approved row
-    nav("#/admin?view=approved");
+    // Failed-processing metadata is visible to the moderator and can be retried.
+    const selected = mock.state.submissions[0];
+    selected.status = "needs_review";
+    selected.processing_attempts = 1;
+    selected.processing_error = "Detector failed on page 3";
+    nav("#/dashboard"); await sleep(100); nav("#/admin");
+    await waitFor(() => $(".ad-table tbody tr"), 8000, "failed processing row");
+    click($('[data-open]'));
+    await waitFor(() => $("#ad-detail") && $("#ad-detail").textContent.indexOf("Detector failed") !== -1, 8000, "processing failure detail");
+    check("moderation: processing error and attempt metadata shown",
+      $("#ad-detail").textContent.indexOf("Detector failed on page 3") !== -1 &&
+      $("#ad-detail").textContent.indexOf("Processing attempts1") !== -1,
+      $("#ad-detail").textContent.slice(0, 220));
+
+    // Once claimed, regular moderation transitions are locked.
+    selected.status = "processing";
+    selected.processing_error = null;
+    nav("#/dashboard"); await sleep(100); nav("#/admin?view=queue");
+    await waitFor(() => $(".ad-table tbody tr"), 8000, "processing queue row");
+    click($('[data-open]'));
+    await waitFor(() => $("#ad-detail") && $("#ad-detail").textContent.indexOf("controlled processor") !== -1, 8000, "processing lock");
+    check("moderation: processing rows have no mutable status form", !$("#ad-form"));
+
+    // Simulate the secure processor's successful completion after publication.
+    selected.status = "approved";
+    selected.paper_id = "2026-mock-high-physics-trial";
+    selected.question_count = 12;
+    selected.premium_granted = true;
+    const owner = mock.state.users[studentId];
+    owner.access_tier = "contributor";
+    owner.premium_until = new Date(Date.now() + 14 * 86400000).toISOString();
+    owner.contribution_credits = 1;
+    mock.state.audit.push({ created_at: new Date().toISOString(), actor: mock.state.session.user.id,
+      action: "complete_upload_processing", target_id: selected.id,
+      previous_status: "processing", new_status: "approved", notes: null });
+
+    // The approved tab shows publication metadata and an immutable row.
+    nav("#/dashboard"); await sleep(100); nav("#/admin?view=approved");
     await waitFor(() => $(".ad-table tbody tr"), 8000, "approved tab");
     check("moderation: approved tab shows approved submission",
       $(".ad-table").textContent.indexOf("Mock_High_2026_Physics_Trial.pdf") !== -1);
+    click($('[data-open]'));
+    await waitFor(() => $("#ad-detail") && $("#ad-detail").textContent.indexOf("2026-mock-high") !== -1, 8000, "published metadata");
+    check("moderation: approved row shows paper/question publication metadata",
+      $("#ad-detail").textContent.indexOf("2026-mock-high-physics-trial") !== -1 &&
+      $("#ad-detail").textContent.indexOf("Questions12") !== -1);
+    check("moderation: approved rows are immutable", !$("#ad-form"));
+    check("moderation: contributor premium granted only on completion",
+      mock.state.users[studentId].access_tier === "contributor" &&
+      mock.state.users[studentId].contribution_credits === 1 &&
+      new Date(mock.state.users[studentId].premium_until) > new Date());
+    check("moderation: completion audited", mock.state.audit.some((a) => a.action === "complete_upload_processing" && a.new_status === "approved"));
 
     // sign back in as the student: they see their own status + premium
     await window.QB.auth.signOut();

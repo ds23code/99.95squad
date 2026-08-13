@@ -28,7 +28,8 @@ def _rows(db: Database) -> list[dict]:
                LEFT JOIN subtopics s ON s.id = q.subtopic_id
                LEFT JOIN courses c ON c.id = q.course_id
                LEFT JOIN subjects subj ON subj.id = COALESCE(q.subject_id, c.subject_id)
-               ORDER BY q.paper_id, q.page_start, q.question_number"""
+               ORDER BY q.paper_id, q.page_start, q.question_number,
+                        q.question_occurrence"""
         ).fetchall()
         for r in rows:
             d = dict(r)
