@@ -1,190 +1,138 @@
-# Making 99.95squad live on GitHub Pages
+# Publishing 99.95squad to GitHub Pages
 
-Goal: students visit **https://ds23code.github.io/99.95squad/** — no server, no
-Mac, nothing to run. GitHub hosts everything.
+The production Pages URL is **https://ds23code.github.io/99.95squad/**.
+GitHub serves a static artifact; no local machine, Flask server, PDF, SQLite
+database, admin token, or Supabase secret is included in that artifact.
 
-There are **3 steps total**. Steps 2 and 3 must be done by you (the repo
-owner) because the automation token used to build this repo cannot push
-workflow files or change repo settings. Each step takes under a minute.
+## 1. Ship through a pull request
 
----
-
-## Before you start (verified for this repo)
-
-- Repo `ds23code/99.95squad` is **public** ✓ (GitHub Pages on the free plan
-  requires a public repo)
-- The site is fully **relative-path based** — it works at
-  `https://ds23code.github.io/99.95squad/` (tested under a `/99.95squad/`
-  subpath, zero 404s)
-- The deploy workflow runs `pytest` + builds `_site` from the committed
-  synthetic sample (13 questions) — no private data, no PDFs
-- PR **#1** (`arena/019ff39c-99-95squad` → `main`) contains the entire codebase
-
----
-
-## Step 1 — Merge the code into `main`
-
-Open https://github.com/ds23code/99.95squad/pull/1 and click
-**Merge pull request** (then *Confirm merge*). You can delete the branch after.
-
-> This alone does not deploy anything — the workflow file isn't in the PR
-> (see below).
-
-## Step 2 — Add the deploy workflow to `main`
-
-The workflow file is ready on disk in this repo (`.github/workflows/pages.yml`)
-but cannot be pushed by the automation token. Add it with one of:
-
-**Option A — GitHub web UI (no local git needed):**
-
-1. Go to https://github.com/ds23code/99.95squad/new/main/.github/workflows
-2. Name the file `pages.yml`
-3. Paste the exact content below
-4. Click **Commit changes** (to `main` directly)
-
-**Option B — your machine:**
+`.github/workflows/pages.yml` is already tracked. Make changes on a feature
+branch, validate them, push that branch, and open a PR to `main`:
 
 ```bash
-git clone git@github.com:ds23code/99.95squad.git
-cd 99.95squad
-mkdir -p .github/workflows
-# create .github/workflows/pages.yml with the content below
-git add .github/workflows/pages.yml
-git commit -m "Enable GitHub Pages deploy"
-git push origin main
+git status --short
+git diff --check
+pytest -q
+python scripts/build_site.py --out site/_site
+git push origin <feature-branch>
+gh pr create --base main --head <feature-branch> --fill
 ```
 
-### Workflow content
+Review the PR's checks and diff, then merge it. Do not bypass review by pushing
+application changes directly to `main`. A push/merge to `main` triggers the
+Pages workflow automatically.
 
-```yaml
-name: Build & deploy to GitHub Pages
+The workflow installs locked frontend dependencies, runs the full pytest suite
+(including DOM/auth smoke tests), builds `_site`, uploads the Pages artifact,
+and deploys it. It builds from committed `site/content_sample/`; private local
+`site/content/`, `data/`, PDFs, SQLite files, and processor claim files are
+ignored and unavailable to Actions.
 
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+## 2. Enable GitHub Pages once
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+In repository **Settings → Pages**, set **Build and deployment → Source** to
+**GitHub Actions**. No branch-based `gh-pages` configuration is needed.
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
+After merging, inspect **Actions → Build & deploy to GitHub Pages**. Both the
+`test` and `deploy` jobs must be green before treating the release as live.
 
-jobs:
-  test:
-    name: Tests + site build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+## 3. Verify the deployed site
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
+Open the production URL and check at least:
 
-      - name: Install Python dependencies
-        run: |
-          pip install -r requirements.txt pytest
+- landing page, question search, one question image, and practice mode;
+- email/password sign-in and a reload that restores the session;
+- a direct/refresh navigation path such as
+  `https://ds23code.github.io/99.95squad/admin` — `404.html` must recover it
+  to `#/admin` without dropping the repository base path;
+- Google sign-in returns to
+  `https://ds23code.github.io/99.95squad/?code=...`, exchanges the PKCE code,
+  removes the query, and restores the intended hash route;
+- a non-admin cannot open `#/admin`; an authenticated profile with
+  `profiles.is_admin = true` can see the Admin link and moderation queue.
 
-      - name: Install frontend test dependencies (jsdom)
-        run: npm ci
+These are post-deploy checks, not substitutes for automated tests. Record only
+checks that were actually performed.
 
-      - name: Run test suite (incl. DOM smoke test)
-        run: pytest -q
+## Supabase migration is a separate release action
 
-      - name: Build static site
-        env:
-          QB_SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
-        run: python scripts/build_site.py --out _site
+The Pages workflow does **not** alter Supabase. Before using **Approve & queue**
+or the controlled remote processor on the existing project, apply
+`site/backend/migrations/20260813_upload_processing_lifecycle.sql` exactly once
+in the Supabase SQL editor. It is additive and data-preserving. Do not reset or
+recreate tables, users, profiles, or Storage.
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
+For a brand-new project only, use `site/backend/supabase.sql`. The frontend
+must contain only the public publishable/legacy anon key. Never put a
+service-role or `sb_secret_...` key in `site/config.js`, GitHub variables,
+browser code, docs, logs, or chat.
 
-  deploy:
-    name: Deploy to GitHub Pages
-    needs: test
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
-```
-
-Committing this file to `main` **triggers the workflow immediately** — it
-runs the full test suite (77 tests), builds `_site`, and deploys it to Pages.
-
-## Step 3 — Tell GitHub Pages to use the workflow
-
-1. Open repo **Settings → Pages**
-   (https://github.com/ds23code/99.95squad/settings/pages)
-2. Under **Build and deployment → Source** select **GitHub Actions**
-   (not "Deploy from a branch")
-3. Done — the site is live once the workflow run finishes.
-
-## Check it worked
-
-1. **Actions tab** → the `Build & deploy to GitHub Pages` run should show
-   green (`test` ✓, `deploy` ✓). First run takes ~2–4 minutes.
-2. Open **https://ds23code.github.io/99.95squad/** — you should see the
-   landing page with 13 sample questions, searchable, images loading.
-3. The workflow run's deploy step also prints the live URL.
-
-From now on, **every push to `main`** re-runs tests, rebuilds and redeploys
-automatically.
-
----
-
-## What students see now (sample content)
-
-The deployed site currently contains the **synthetic sample** (13 questions) —
-enough to verify everything works, but not a real question bank yet.
-
-### Publishing your real library (only what you're legally allowed to share)
+After applying the migration, use the admin page at `#/admin` to preview a
+student PDF and click **Approve & queue**. That does not publish or reward the
+student. An operator then processes that one selected UUID with an admin-user
+session:
 
 ```bash
-# on your machine (private): process your PDFs, review, then export
-python -m pipeline init
-python -m pipeline process data/papers/            # your real papers
-python -m pipeline quality-check                  # must be 0 errors
-python -m pipeline export-static --out site/content   # full library (git-ignored)
+umask 077
+mkdir -p "$HOME/.config/99.95squad" && chmod 700 "$HOME/.config/99.95squad"
+export SUPABASE_URL='https://ykmdjcsuhpwujaqnufhe.supabase.co'
+export SUPABASE_PUBLISHABLE_KEY='<public-project-key>'  # SUPABASE_ANON_KEY also works
+export SUPABASE_SESSION_FILE="$HOME/.config/99.95squad/admin-session.json"
+# First-run bootstrap only; use a dedicated admin-user session:
+export SUPABASE_ACCESS_TOKEN='<dedicated-admin-user-access-token>'
+export SUPABASE_REFRESH_TOKEN='<matching-rotating-refresh-token>'
+python -m pipeline uploads process-remote <submission-uuid> \
+  --export-out site/content
+unset SUPABASE_ACCESS_TOKEN SUPABASE_REFRESH_TOKEN
+```
 
-# preview locally first
+The absolute session file is created mode `0600` and atomically updated after
+every rotating-token refresh, so later restarts use the current pair. Treat it
+as a live bearer credential: keep it outside Git/backups/logs/chat and never
+share that dedicated session with a browser. See `docs/AUTH.md` for bootstrap,
+permission, override-flag, and retirement details.
+
+The command claims, downloads, processes, validates, and exports exactly one
+submission. Only successful completion changes the row to `approved` and
+grants contributor credit. Rerun the same UUID after an uncertain response;
+the durable claim token prevents double publication/reward.
+
+## Publishing content deliberately
+
+The deployed repository currently uses the committed synthetic sample. For
+real material:
+
+```bash
+# Private/local preparation
+python -m pipeline process data/papers/one-paper.pdf
+python -m pipeline process data/papers/one-paper.pdf  # verify idempotent skip
+python -m pipeline quality-check
+python -m pipeline export-static --out site/content --source full
 python scripts/build_site.py --out site/_site
 python scripts/serve_site.py --port 8080
-
-# publish: replace the committed sample with your export
-rm -rf site/content_sample && cp -r site/content site/content_sample
-# IMPORTANT: only if you have the right to publish every paper inside.
-git add site/content_sample && git commit -m "Publish question library" && git push origin main
 ```
 
-Keep `data/papers/`, `data/questionbank.db` and `site/content/` **private**
-— they are git-ignored and never leave your machine.
+Inspect crops, repeated-number IDs, answer/solution attachment, metadata,
+copyright, and the local preview. Then copy only content you are legally and
+operationally ready to publish into the tracked publication source
+`site/content_sample/`, review that potentially large diff, and ship it in a
+separate PR. Keep source PDFs, `data/questionbank.db`, and `site/content/`
+private.
 
-### Custom domain (optional, later)
-
-Buy a domain, point a `CNAME` record at `ds23code.github.io`, then add the
-domain in **Settings → Pages → Custom domain**, and set
-`QB_SITE_URL: https://yourdomain/` as a repository variable so sitemap/robots
-match.
-
----
+Do not begin with the entire archive. Validate one PDF, its rerun, several
+papers sharing printed question numbers, duplicate handling, and failure
+recovery, then use modest batches. A 100,000–300,000 question deployment needs
+a backend search/content strategy and storage/cost review before publication;
+do not assume one giant GitHub Pages commit is production-ready.
 
 ## Troubleshooting
 
-| Symptom | Fix |
+| Symptom | Action |
 |---|---|
-| Workflow run fails at `pytest` | Open the Actions log; the failing test names are printed. Most likely a test that needs `npm install` (step runs it) or a transient network issue — re-run the job. |
-| Pages shows "Site has no content" | You built from a checkout without `site/content_sample` committed. Merge PR #1 first (it contains it). |
-| Images don't load | Verify with the browser console — the site shows the exact requested URL in a broken-image box. `site/content_sample` must be present. |
-| Deployment skipped | Check the Actions tab for the workflow file; then Settings → Pages → Source must be **GitHub Actions**. |
+| PR/Pages test fails | Open the named check and reproduce its exact command locally; do not merge by disabling the check. |
+| Pages has sample content only | Expected unless a reviewed export was deliberately committed to `site/content_sample/`. |
+| Direct nested URL shows GitHub 404 | Confirm the deployed artifact contains `404.html`, then check its repository-base recovery logic and cache version. |
+| Google returns but the user is not signed in | Check the exact Pages root redirect URL, same-browser PKCE verifier, token exchange, `/auth/v1/user`, and profile request; provider success alone is not app success. |
+| Admin link is absent | Confirm the restored user matches a `profiles` row whose `is_admin` is true; do not weaken the server-side check. |
+| Queue/processor says an RPC or column is missing | Apply the additive lifecycle migration to the existing Supabase project; do not rerun/reset the whole canonical schema. |
+| Images fail | Inspect the exact URL shown by the broken-image UI and verify the referenced file exists in the built `content/` tree. |

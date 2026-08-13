@@ -79,7 +79,7 @@ def _slug(value: str) -> str:
 
 def extract_solutions(
     result: DetectionResult,
-    questions_by_number: dict[str, QuestionRegion],
+    questions_by_number: dict[str, list[QuestionRegion]],
     paper_id: str,
     doc,
     out_dir: Path,
@@ -89,10 +89,16 @@ def extract_solutions(
 ) -> tuple[list[AnswerAttachment], list[AnswerAttachment]]:
     """Crop answer/solution regions and attach them to questions.
 
+    Repeated question numbers are paired in document order.  Answer and worked
+    solution blocks have independent counters because a paper may contain both
+    for the same question.  Extra blocks remain paper-level attachments rather
+    than being silently linked to the wrong occurrence.
+
     Returns (answers, solutions) lists of AnswerAttachment.
     """
     answers: list[AnswerAttachment] = []
     solutions: list[AnswerAttachment] = []
+    attachment_occurrences: dict[tuple[str, str], int] = {}
 
     for region in result.solution_regions:
         page = doc.load_page(region.page_start - 1)
@@ -100,21 +106,30 @@ def extract_solutions(
         crop = crop_page_region(img, region.y_top, region.y_bottom, dpi, padding_points)
         text = clean_ocr(region.text or "")
         answer_text = parse_short_answer(text)
-        question = questions_by_number.get(region.number)
+        kind = "answer" if answer_text is not None else "solution"
 
-        if answer_text is not None and question is not None:
-            kind, filename = "answer", f"q{int(region.number):02d}_answer.png"
-        elif question is not None:
-            kind, filename = "solution", f"q{int(region.number):02d}_solution.png"
+        candidates = questions_by_number.get(region.number, [])
+        counter_key = (region.number, kind)
+        occurrence = attachment_occurrences.get(counter_key, 0) + 1
+        attachment_occurrences[counter_key] = occurrence
+        question = candidates[occurrence - 1] if occurrence <= len(candidates) else None
+
+        if question is not None:
+            number = _file_number(region.number)
+            filename = f"q{number}{occurrence_suffix(occurrence)}_{kind}.png"
         else:
-            kind, filename = "solution", f"page{region.page_start:03d}_block{_slug(region.number)}.png"
+            filename = f"page{region.page_start:03d}_block{_slug(region.number)}.png"
 
         out_path = out_dir / filename
         out_path.parent.mkdir(parents=True, exist_ok=True)
         crop.save(out_path, format="PNG")
 
         att = AnswerAttachment(
-            question_id=question_id(paper_id, region.number) if question is not None else None,
+            question_id=(
+                question_id(paper_id, region.number, occurrence)
+                if question is not None
+                else None
+            ),
             answer_text=answer_text,
             image_path=str(out_path),
             source_page=region.page_start,
@@ -126,5 +141,25 @@ def extract_solutions(
     return answers, solutions
 
 
-def question_id(paper_id: str, number: str) -> str:
-    return f"{paper_id}-q{number}"
+def _file_number(number: str) -> str:
+    """Filesystem-safe question number while preserving legacy numeric names."""
+    try:
+        return f"{int(number):02d}"
+    except (TypeError, ValueError):
+        return _slug(str(number))
+
+
+def occurrence_suffix(occurrence: int) -> str:
+    """Stable discriminator used by IDs and files for repeated numbers."""
+    if occurrence < 1:
+        raise ValueError("question occurrence must be at least 1")
+    return "" if occurrence == 1 else f"--occurrence-{occurrence}"
+
+
+def question_id(paper_id: str, number: str, occurrence: int = 1) -> str:
+    """Return a deterministic globally unique question ID.
+
+    The first occurrence deliberately retains the historic ``<paper>-qN`` ID.
+    Only repeated numbers gain an explicit occurrence suffix.
+    """
+    return f"{paper_id}-q{number}{occurrence_suffix(occurrence)}"

@@ -28,7 +28,7 @@ python -m pipeline init         # create the database + seed the taxonomy
 
 # 3. First milestone: process ONE paper
 python -m pipeline process data/papers/TrialMaths_2023_2U_wsols.pdf
-#   -> data/questions/<course>/<year>/<source>/q01.png, q02.png, ...
+#   -> data/questions/<course>/<year>/<source>/<paper-id>/q01.png, q02.png, ...
 #   -> every question in the database with OCR, topic, difficulty, marks, answers
 
 # 4. Inspect what you got
@@ -129,8 +129,11 @@ Each stage is a module in `pipeline/`:
 - **Uncertainty is stored, never hidden.** Every question carries
   `extraction_confidence` and `classification_confidence`; low-confidence or
   flagged questions land in the review queue (`pipeline review`).
-- **Resume & dedupe.** Papers are keyed by sha256; a re-run skips completed
-  papers unless `--force`. One bad PDF never stops the batch.
+- **Resume, dedupe, and stable identity.** Papers are keyed by SHA-256; a
+  rerun skips completed papers unless `--force`. Question identity is
+  `(paper_id, printed number, occurrence)`, so section restarts and separate
+  PDFs that both contain question 1 cannot collide. One bad PDF never stops
+  the batch.
 
 ---
 
@@ -153,8 +156,11 @@ python -m pipeline validate --input /path/to/pdfs    # …or your real papers
 python -m pipeline quality-check                     # data-quality audit (before publishing)
 python -m pipeline uploads list                      # student upload moderation
 python -m pipeline uploads register paper.pdf --uploader student-1
-python -m pipeline uploads approve <upload-id>
+python -m pipeline uploads approve <upload-id>       # device-local moderation
 python -m pipeline uploads reject|duplicate <upload-id>
+# Supabase: after Admin → “Approve & queue”, process exactly one selected UUID.
+# Requires an absolute mode-0600 SUPABASE_SESSION_FILE; see docs/AUTH.md:
+python -m pipeline uploads process-remote <submission-uuid> --export-out site/content
 python -m pipeline stats
 python -m pipeline sample                            # generate test PDF
 ```
@@ -165,6 +171,8 @@ Frontend commands:
 python scripts/build_site.py                        # assemble + validate site/_site
 python scripts/serve_site.py --port 8080            # serve the static site locally
 node scripts/dom_smoke.js site/_site node_modules/jsdom   # DOM smoke test
+npm run test:auth                              # PKCE/session/profile smoke
+npm run test:routes                            # direct Pages path recovery
 ```
 
 ---
@@ -229,13 +237,14 @@ The static site includes:
   configured (`docs/AUTH.md`). Premium is a database entitlement — users
   cannot grant it to themselves.
 - **Contribute a paper** — size + magic-byte + SHA-256 checks, copyright
-  acknowledgement, upload quota, pending → approved moderation statuses,
-  14-day premium for approved uploads (server-side). With Supabase enabled,
-  the PDF bytes are stored in a **private storage bucket** and moderators
-  preview them through short-lived signed URLs — the bucket is never public.
-- **Admin moderation page** — approve / reject / duplicate / needs-review /
-  needs-changes for reviewers, with PDF preview, uploader identity, file
-  size, duplicate information and a full review-history audit trail.
+  acknowledgement and upload quotas. With Supabase enabled, PDF bytes are in
+  a **private storage bucket** and moderators preview short-lived signed URLs.
+  “Approve & queue” only authorises controlled processing; the server grants
+  14-day premium after processing, validation and publication complete.
+- **Admin moderation page** — queue / reject / duplicate / needs-review /
+  needs-changes actions, with PDF preview, uploader identity, file size,
+  processing errors, duplicate information and an audit trail. Processing and
+  published states are locked to lifecycle RPCs, not browser PATCH requests.
 
 The pipeline layer also ships a smaller Flask app (`python -m pipeline
 serve`) that reads the database directly — useful as a local admin view and
@@ -350,8 +359,12 @@ Core tables: `subjects`, `courses`, `topics`, `subtopics`, `papers`, `pages`,
 `questions`, `answers`, `solutions`, `user_marks`, plus the FTS5 table
 `questions_fts` backing search.
 
-Question IDs are stable and human-readable:
-`trialmaths-2023-mathematics-advanced-<sha8>-q6`.
+Question IDs are stable and human-readable. New paper IDs use a 16-character
+SHA-256 prefix, for example
+`trialmaths-2023-mathematics-advanced-<sha16>-q6`. If a paper restarts its
+numbering, later occurrences are explicit, for example
+`trialmaths-2023-mathematics-advanced-<sha16>-q6--occurrence-2`. Existing papers
+found by full-SHA lookup retain IDs created with the earlier shorter suffix.
 
 See [docs/DATABASE.md](docs/DATABASE.md) for the full schema and field
 documentation.
@@ -362,10 +375,8 @@ documentation.
 
 ```bash
 pip install -e ".[dev]"     # or: pip install -r requirements.txt pytest
-npm install                 # jsdom (frontend smoke tests)
-pytest                      # 66 tests: config, DB, detector, OCR, classifier,
-                            # uploads, validation, review UI, static export,
-                            # site build, DOM smoke
+npm ci                      # locked jsdom/frontend test dependencies
+pytest -q                   # Python, pipeline, SQL contracts, build and DOM/auth smoke
 ```
 
 The test suite covers:
@@ -373,9 +384,13 @@ The test suite covers:
 - pipeline E2E (`tests/test_process.py`) — synthetic TrialMaths-style PDF →
   13 questions, MCQ/subpart/marks metadata, multi-page stitched image,
   answers + solution crops, topic classification, FTS search.
-- uploads & moderation (`tests/test_uploads.py`) — hash dedupe, size and
-  magic-byte abuse checks, register → approve → premium grant,
+- local uploads & moderation (`tests/test_uploads.py`) — hash dedupe, size and
+  magic-byte abuse checks, register → approve → premium grant, and
   reject/duplicate statuses.
+- controlled Supabase ingestion (`tests/test_remote_upload_processing.py` and
+  `tests/test_supabase_upload_lifecycle_sql.py`) — authenticated one-row
+  claims, private download validation, rotating sessions, same-token recovery,
+  completion-only entitlement and lifecycle permissions.
 - validation (`tests/test_validate.py`) — quality audit catches planted
   issues (bad marks/difficulty/page refs/missing images/duplicate images),
   and the full 7-paper suite runs with sane metrics.

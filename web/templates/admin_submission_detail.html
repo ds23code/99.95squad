@@ -107,8 +107,8 @@
          · <span class="pill warn">missing solution</span>
          {% endif %}
       </p>
-      {% if q.image_path %}
-      <img class="thumb" src="/images/questions/{{ q.course_id }}/{{ q.paper_year }}/q{{ q.question_number }}.png" onerror="this.style.display='none'" alt="Question {{ q.question_number }}">
+      {% if q.image_url %}
+      <img class="thumb" src="{{ q.image_url }}" onerror="this.style.display='none'" alt="Question {{ q.question_number }}{% if q.question_occurrence > 1 %}, occurrence {{ q.question_occurrence }}{% endif %}">
       {% endif %}
       {% if q.ocr_clean %}
       <details>

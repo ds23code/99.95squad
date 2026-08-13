@@ -7,6 +7,9 @@
     "jsdom": "^24.0.0"
   },
   "scripts": {
-    "test:dom": "node scripts/dom_smoke.js site/_site node_modules/jsdom"
+    "test:dom": "node scripts/dom_smoke.js site/_site node_modules/jsdom",
+    "test:dom:supabase": "node scripts/dom_smoke.js site/_site node_modules/jsdom '' --mock-supabase",
+    "test:auth": "node scripts/auth_smoke.js node_modules/jsdom",
+    "test:routes": "node scripts/route_recovery_smoke.js"
   }
 }

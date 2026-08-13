@@ -197,7 +197,8 @@ def export_static(
                    JOIN papers p ON p.id = q.paper_id
                    LEFT JOIN courses c ON c.id = q.course_id
                    WHERE p.status = 'complete'
-                   ORDER BY q.paper_id, q.page_start, q.question_number"""
+                   ORDER BY q.paper_id, q.page_start, q.question_number,
+                            q.question_occurrence"""
             ).fetchall()
         ]
 

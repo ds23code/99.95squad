@@ -148,6 +148,8 @@ def submission_detail(sub_id: str):
         abort(404)
     paper = db.get_paper(sub["paper_id"]) if sub.get("paper_id") else None
     questions = db.questions_for_paper(paper["id"]) if paper else []
+    for question in questions:
+        question["image_url"] = _img_url(question.get("image_path"))
     warnings = []
     if sub.get("duplicate_type") == "exact_sha256" or sub.get("status") == "duplicate":
         warnings.append("Duplicate SHA-256 hash detected")

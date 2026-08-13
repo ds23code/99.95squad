@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS questions (
     id TEXT PRIMARY KEY,
     paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
     question_number TEXT NOT NULL,
+    question_occurrence INTEGER NOT NULL DEFAULT 1,
     section TEXT,
     marks INTEGER,
     subparts INTEGER,
@@ -126,7 +127,7 @@ CREATE TABLE IF NOT EXISTS questions (
     review_notes TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(paper_id, question_number, page_start)
+    UNIQUE(paper_id, question_number, question_occurrence)
 );
 
 CREATE INDEX IF NOT EXISTS idx_questions_paper ON questions(paper_id);
@@ -155,6 +156,13 @@ CREATE TABLE IF NOT EXISTS solutions (
     source_page INTEGER,
     confidence REAL
 );
+
+-- These non-unique indexes support logical attachment replacement without
+-- imposing a new constraint on legacy databases that may contain duplicates.
+CREATE INDEX IF NOT EXISTS idx_answers_question_page
+    ON answers(question_id, source_page);
+CREATE INDEX IF NOT EXISTS idx_solutions_question_page
+    ON solutions(question_id, source_page);
 
 CREATE TABLE IF NOT EXISTS user_marks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -254,6 +262,162 @@ class Database:
     def init_schema(self) -> None:
         with self.conn() as c:
             c.executescript(SCHEMA)
+            self._migrate_question_identity(c)
+
+    @staticmethod
+    def _migrate_question_identity(c: sqlite3.Connection) -> None:
+        """Upgrade legacy databases to occurrence-aware question identity.
+
+        The original table was unique on ``(paper_id, question_number,
+        page_start)``.  Besides making a caller-provided primary key collide,
+        that constraint could not represent two same-number regions on one
+        page.  SQLite cannot drop a table-level UNIQUE constraint, so this is a
+        data-preserving table rebuild.  Existing IDs and review metadata remain
+        unchanged; occurrence values are assigned in page/row order.
+        """
+        columns = [row["name"] for row in c.execute("PRAGMA table_info(questions)")]
+        if not columns:
+            return
+
+        unique_shapes: set[tuple[str, ...]] = set()
+        for index in c.execute("PRAGMA index_list(questions)").fetchall():
+            if not index["unique"]:
+                continue
+            name = str(index["name"]).replace("'", "''")
+            shape = tuple(
+                row["name"]
+                for row in c.execute(f"PRAGMA index_info('{name}')").fetchall()
+            )
+            unique_shapes.add(shape)
+
+        old_shape = ("paper_id", "question_number", "page_start")
+        new_shape = ("paper_id", "question_number", "question_occurrence")
+        if "question_occurrence" in columns and old_shape not in unique_shapes and new_shape in unique_shapes:
+            return
+
+        start = SCHEMA.index("CREATE TABLE IF NOT EXISTS questions (")
+        end = SCHEMA.index("\n\nCREATE INDEX IF NOT EXISTS idx_questions_paper", start)
+        table_sql = SCHEMA[start:end].replace(
+            "CREATE TABLE IF NOT EXISTS questions (",
+            "CREATE TABLE questions__identity_migration (",
+            1,
+        )
+
+        def normalised_fk_violations() -> set[tuple[Any, ...]]:
+            """Describe violations using child keys/values rather than row order."""
+            normalised: set[tuple[Any, ...]] = set()
+            for violation in c.execute("PRAGMA foreign_key_check").fetchall():
+                table = str(violation[0])
+                rowid = violation[1]
+                parent = str(violation[2])
+                fk_id = int(violation[3])
+                quoted_table = table.replace('"', '""')
+                table_info = c.execute(f'PRAGMA table_info("{quoted_table}")').fetchall()
+                pk_columns = [
+                    row["name"]
+                    for row in sorted(table_info, key=lambda item: item["pk"] or 10_000)
+                    if row["pk"]
+                ]
+                fk_columns = [
+                    row["from"]
+                    for row in c.execute(f'PRAGMA foreign_key_list("{quoted_table}")').fetchall()
+                    if int(row["id"]) == fk_id
+                ]
+                wanted = list(dict.fromkeys([*pk_columns, *fk_columns]))
+                child_values: tuple[Any, ...] = ()
+                if wanted and rowid is not None:
+                    quoted_columns = ", ".join(
+                        f'"{str(name).replace(chr(34), chr(34) * 2)}"' for name in wanted
+                    )
+                    child = c.execute(
+                        f'SELECT {quoted_columns} FROM "{quoted_table}" WHERE rowid=?',
+                        (rowid,),
+                    ).fetchone()
+                    if child is not None:
+                        child_values = tuple(child)
+                # A PK remains stable across the table rebuild. For a table
+                # without one, retain rowid as the best available identity.
+                identity = child_values[: len(pk_columns)] if pk_columns else (rowid,)
+                fk_values = child_values[len(pk_columns) :]
+                normalised.add((table, identity, parent, tuple(fk_columns), fk_values))
+            return normalised
+
+        # PRAGMA foreign_keys is a no-op inside a transaction.  executescript()
+        # above has committed, so capture any legacy violations, then disable
+        # enforcement before beginning the transactional rebuild.
+        c.commit()
+        previous_violations = normalised_fk_violations()
+        c.execute("PRAGMA foreign_keys = OFF")
+        try:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute("DROP TABLE IF EXISTS questions__identity_migration")
+            c.execute(table_sql)
+
+            old_columns = [row["name"] for row in c.execute("PRAGMA table_info(questions)")]
+            new_columns = [
+                row["name"]
+                for row in c.execute("PRAGMA table_info(questions__identity_migration)")
+            ]
+            rows = c.execute(
+                "SELECT * FROM questions ORDER BY paper_id, question_number, "
+                "COALESCE(page_start, 0), rowid"
+            ).fetchall()
+            next_occurrence: dict[tuple[str, str], int] = {}
+            used_occurrences: dict[tuple[str, str], set[int]] = {}
+            insert_columns = [name for name in new_columns if name in old_columns]
+            if "question_occurrence" not in insert_columns:
+                insert_columns.insert(3, "question_occurrence")
+            placeholders = ", ".join("?" for _ in insert_columns)
+            column_sql = ", ".join(insert_columns)
+
+            for row in rows:
+                data = dict(row)
+                key = (str(data["paper_id"]), str(data["question_number"]))
+                used = used_occurrences.setdefault(key, set())
+                candidate = data.get("question_occurrence")
+                try:
+                    occurrence = int(candidate)
+                except (TypeError, ValueError):
+                    occurrence = 0
+                if occurrence < 1 or occurrence in used:
+                    occurrence = next_occurrence.get(key, 1)
+                    while occurrence in used:
+                        occurrence += 1
+                used.add(occurrence)
+                next_occurrence[key] = max(next_occurrence.get(key, 1), occurrence + 1)
+                data["question_occurrence"] = occurrence
+                c.execute(
+                    f"INSERT INTO questions__identity_migration ({column_sql}) "
+                    f"VALUES ({placeholders})",
+                    [data.get(name) for name in insert_columns],
+                )
+
+            c.execute("DROP TABLE questions")
+            c.execute("ALTER TABLE questions__identity_migration RENAME TO questions")
+            for index_sql in (
+                "CREATE INDEX IF NOT EXISTS idx_questions_paper ON questions(paper_id)",
+                "CREATE INDEX IF NOT EXISTS idx_questions_course ON questions(course_id)",
+                "CREATE INDEX IF NOT EXISTS idx_questions_topic ON questions(topic_id)",
+                "CREATE INDEX IF NOT EXISTS idx_questions_type ON questions(question_type)",
+                "CREATE INDEX IF NOT EXISTS idx_questions_status ON questions(status)",
+            ):
+                c.execute(index_sql)
+
+            introduced = normalised_fk_violations() - previous_violations
+            if introduced:
+                raise sqlite3.IntegrityError(
+                    "question identity migration introduced "
+                    f"{len(introduced)} foreign-key violation(s)"
+                )
+            c.commit()
+        except Exception:
+            # DDL is transactional in this explicitly managed SQLite
+            # transaction, so a failed integrity comparison restores the old
+            # table before foreign-key enforcement is re-enabled.
+            c.rollback()
+            raise
+        finally:
+            c.execute("PRAGMA foreign_keys = ON")
 
     def close(self) -> None:
         if self._conn is not None:
@@ -416,25 +580,27 @@ class Database:
 
     # ------------------------------------------------------------ questions
     def upsert_question(self, q: dict) -> str:
+        q = dict(q)
+        q.setdefault("question_occurrence", 1)
         with self.conn() as c:
             c.execute(
-                """INSERT INTO questions (id, paper_id, question_number, section, marks,
-                       subparts, page_start, page_end, image_path, image_width,
+                """INSERT INTO questions (id, paper_id, question_number, question_occurrence,
+                       section, marks, subparts, page_start, page_end, image_path, image_width,
                        image_height, ocr_raw, ocr_clean, ocr_engine, ocr_confidence,
                        answer, answer_source, solution_image_path, solution_text,
                        subject_id, course_id, year_level, topic_id, subtopic_id,
                        difficulty, difficulty_reasoning, question_type,
                        extraction_confidence, classification_confidence, status,
                        review_flags)
-                   VALUES (:id, :paper_id, :question_number, :section, :marks,
-                       :subparts, :page_start, :page_end, :image_path, :image_width,
+                   VALUES (:id, :paper_id, :question_number, :question_occurrence,
+                       :section, :marks, :subparts, :page_start, :page_end, :image_path, :image_width,
                        :image_height, :ocr_raw, :ocr_clean, :ocr_engine, :ocr_confidence,
                        :answer, :answer_source, :solution_image_path, :solution_text,
                        :subject_id, :course_id, :year_level, :topic_id, :subtopic_id,
                        :difficulty, :difficulty_reasoning, :question_type,
                        :extraction_confidence, :classification_confidence, :status,
                        :review_flags)
-                   ON CONFLICT(paper_id, question_number, page_start) DO UPDATE SET
+                   ON CONFLICT(paper_id, question_number, question_occurrence) DO UPDATE SET
                        section=excluded.section, marks=excluded.marks,
                        subparts=excluded.subparts, page_start=excluded.page_start,
                        page_end=excluded.page_end, image_path=excluded.image_path,
@@ -461,8 +627,23 @@ class Database:
                        updated_at=datetime('now')""",
                 q,
             )
-            self._sync_fts(c, q["id"])
-            return q["id"]
+            persisted = c.execute(
+                """SELECT id FROM questions
+                   WHERE paper_id=? AND question_number=? AND question_occurrence=?""",
+                (q["paper_id"], q["question_number"], q["question_occurrence"]),
+            ).fetchone()
+            if persisted is None:  # Defensive: the upsert above must produce this row.
+                raise sqlite3.IntegrityError("question upsert did not persist its logical identity")
+            persisted_id = str(persisted["id"])
+            # A legacy row may deliberately retain a non-canonical primary key.
+            # Remove any stale candidate FTS entry, then index the ID that was
+            # actually retained by the logical-key conflict update.
+            c.execute(
+                "DELETE FROM questions_fts WHERE question_id IN (?, ?)",
+                (q["id"], persisted_id),
+            )
+            self._sync_fts(c, persisted_id)
+            return persisted_id
 
     @staticmethod
     def _sync_fts(c: sqlite3.Connection, question_id: str) -> None:
@@ -525,7 +706,8 @@ class Database:
     def questions_for_paper(self, paper_id: str) -> list[dict]:
         with self.conn() as c:
             rows = c.execute(
-                "SELECT * FROM questions WHERE paper_id=? ORDER BY page_start, question_number",
+                "SELECT * FROM questions WHERE paper_id=? "
+                "ORDER BY page_start, question_number, question_occurrence",
                 (paper_id,),
             ).fetchall()
             return [dict(r) for r in rows]
@@ -638,7 +820,8 @@ class Database:
             LEFT JOIN courses c ON c.id = questions.course_id
             LEFT JOIN subjects subj ON subj.id = COALESCE(questions.subject_id, c.subject_id)
             {where_sql}
-            ORDER BY questions.paper_id, questions.page_start, questions.question_number
+            ORDER BY questions.paper_id, questions.page_start,
+                     questions.question_number, questions.question_occurrence
             LIMIT ? OFFSET ?
         """
         with self.conn() as c:
@@ -674,39 +857,80 @@ class Database:
 
     # ------------------------------------------------------------- solutions
     def upsert_answer(self, answer: dict) -> str:
-        answer_id = answer.get("id") or f"{answer['question_id'] or answer['paper_id']}-ans-{answer['source_page']}"
+        question_id = answer.get("question_id")
+        source_page = answer.get("source_page")
+        candidate_id = answer.get("id") or f"{question_id or answer['paper_id']}-ans-{source_page}"
         with self.conn() as c:
+            answer_id = candidate_id
+            if question_id is not None:
+                logical_rows = c.execute(
+                    """SELECT id FROM answers
+                       WHERE question_id=? AND source_page IS ? ORDER BY rowid""",
+                    (question_id, source_page),
+                ).fetchall()
+                if logical_rows:
+                    existing_ids = [str(row["id"]) for row in logical_rows]
+                    answer_id = candidate_id if candidate_id in existing_ids else existing_ids[0]
+                    c.execute(
+                        "DELETE FROM answers WHERE question_id=? AND source_page IS ? AND id<>?",
+                        (question_id, source_page, answer_id),
+                    )
             c.execute(
-                """INSERT OR REPLACE INTO answers (id, question_id, paper_id, answer_text,
+                """INSERT INTO answers (id, question_id, paper_id, answer_text,
                        answer_type, image_path, source_page, confidence)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       question_id=excluded.question_id, paper_id=excluded.paper_id,
+                       answer_text=excluded.answer_text, answer_type=excluded.answer_type,
+                       image_path=excluded.image_path, source_page=excluded.source_page,
+                       confidence=excluded.confidence""",
                 (
                     answer_id,
-                    answer.get("question_id"),
+                    question_id,
                     answer.get("paper_id"),
                     answer.get("answer_text"),
                     answer.get("answer_type", "answer"),
                     answer.get("image_path"),
-                    answer.get("source_page"),
+                    source_page,
                     answer.get("confidence", 1.0),
                 ),
             )
             return answer_id
 
     def upsert_solution(self, solution: dict) -> str:
-        solution_id = solution.get("id") or f"{solution['question_id'] or solution['paper_id']}-sol-{solution['source_page']}"
+        question_id = solution.get("question_id")
+        source_page = solution.get("source_page")
+        candidate_id = solution.get("id") or f"{question_id or solution['paper_id']}-sol-{source_page}"
         with self.conn() as c:
+            solution_id = candidate_id
+            if question_id is not None:
+                logical_rows = c.execute(
+                    """SELECT id FROM solutions
+                       WHERE question_id=? AND source_page IS ? ORDER BY rowid""",
+                    (question_id, source_page),
+                ).fetchall()
+                if logical_rows:
+                    existing_ids = [str(row["id"]) for row in logical_rows]
+                    solution_id = candidate_id if candidate_id in existing_ids else existing_ids[0]
+                    c.execute(
+                        "DELETE FROM solutions WHERE question_id=? AND source_page IS ? AND id<>?",
+                        (question_id, source_page, solution_id),
+                    )
             c.execute(
-                """INSERT OR REPLACE INTO solutions (id, question_id, paper_id, image_path,
+                """INSERT INTO solutions (id, question_id, paper_id, image_path,
                        text, source_page, confidence)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       question_id=excluded.question_id, paper_id=excluded.paper_id,
+                       image_path=excluded.image_path, text=excluded.text,
+                       source_page=excluded.source_page, confidence=excluded.confidence""",
                 (
                     solution_id,
-                    solution.get("question_id"),
+                    question_id,
                     solution.get("paper_id"),
                     solution.get("image_path"),
                     solution.get("text"),
-                    solution.get("source_page"),
+                    source_page,
                     solution.get("confidence", 1.0),
                 ),
             )

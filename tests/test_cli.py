@@ -57,3 +57,99 @@ def test_cli_import_dir(config, tmp_path, capsys):
     assert "Import directory summary:" in out
     assert "discovered:" in out
     assert "completed:" in out
+
+
+def test_cli_remote_requires_exactly_one_submission(capsys):
+    assert main(["uploads", "process-remote"]) == 2
+    assert "exactly one submission UUID" in capsys.readouterr().err
+    assert main(["uploads", "process-remote", "one", "two"]) == 2
+
+
+def test_cli_remote_reports_missing_environment(monkeypatch, capsys):
+    for name in (
+        "SUPABASE_URL",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_PUBLISHABLE_KEY",
+        "SUPABASE_ACCESS_TOKEN",
+        "SUPABASE_REFRESH_TOKEN",
+        "SUPABASE_SESSION_FILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    rc = main(["uploads", "process-remote", "0c72bf8a-dd6b-4762-b969-26ed601bd89a"])
+    assert rc == 1
+    assert "missing environment variable" in capsys.readouterr().err
+
+
+def test_cli_remote_requires_restart_safe_session_file(monkeypatch, capsys):
+    import pipeline.uploads as uploads
+
+    class Client:
+        refresh_token = "refresh"
+        session_file = None
+
+    monkeypatch.setattr(
+        uploads.SupabaseAdminClient,
+        "from_environment",
+        classmethod(lambda cls, **kwargs: Client()),
+    )
+    rc = main(["uploads", "process-remote", "0c72bf8a-dd6b-4762-b969-26ed601bd89a"])
+    assert rc == 1
+    assert "SUPABASE_SESSION_FILE is required" in capsys.readouterr().err
+
+
+def test_cli_remote_requires_refresh_token(monkeypatch, capsys, tmp_path):
+    import pipeline.uploads as uploads
+
+    class Client:
+        refresh_token = None
+        session_file = tmp_path / "session.json"
+
+    monkeypatch.setattr(
+        uploads.SupabaseAdminClient,
+        "from_environment",
+        classmethod(lambda cls, **kwargs: Client()),
+    )
+    rc = main(["uploads", "process-remote", "0c72bf8a-dd6b-4762-b969-26ed601bd89a"])
+    assert rc == 1
+    assert "session file must contain a refresh token" in capsys.readouterr().err
+
+
+def test_cli_remote_passes_one_id_and_limits_to_processor(monkeypatch, capsys, tmp_path):
+    import pipeline.uploads as uploads
+
+    submission_id = "0c72bf8a-dd6b-4762-b969-26ed601bd89a"
+
+    class Client:
+        refresh_token = "refresh"
+        session_file = tmp_path / "session.json"
+
+    client = Client()
+    monkeypatch.setattr(
+        uploads.SupabaseAdminClient,
+        "from_environment",
+        classmethod(lambda cls, **kwargs: client),
+    )
+    seen = {}
+
+    def fake_process(config, selected, actual_client, **kwargs):
+        seen.update(selected=selected, client=actual_client, kwargs=kwargs)
+        return {
+            "submission_id": selected,
+            "paper_id": "paper-id",
+            "questions": 7,
+            "export_out": kwargs["export_out"],
+        }
+
+    monkeypatch.setattr(uploads, "process_remote_upload", fake_process)
+    export_out = tmp_path / "published-content"
+    rc = main([
+        "uploads", "process-remote", submission_id,
+        "--export-out", str(export_out), "--max-bytes", "123456",
+    ])
+    assert rc == 0
+    assert seen == {
+        "selected": submission_id,
+        "client": client,
+        "kwargs": {"export_out": str(export_out), "max_bytes": 123456},
+    }
+    assert "approved" in capsys.readouterr().out

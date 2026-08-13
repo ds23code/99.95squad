@@ -20,18 +20,59 @@ Every PDF goes through: register (sha256) → render → detect → crop → OCR
 classify → answers/solutions → DB. Progress is persisted in `papers.status`;
 interrupted batches resume where they stopped. `--force` reprocesses.
 
+Student submissions in Supabase use the same pipeline but must be selected one
+at a time after an admin clicks **Approve & queue**:
+
+```bash
+python -m pipeline uploads process-remote <submission-uuid> --export-out site/content
+```
+
+Do not point this command at a directory or use a service-role key. It requires
+the additive lifecycle migration, a dedicated admin-user session, and an
+absolute private `SUPABASE_SESSION_FILE` that is atomically updated when tokens
+rotate; see `docs/AUTH.md` for the exact bootstrap and recovery workflow.
+
+### Duplicate semantics in the cloud queue
+
+The upload page hashes each PDF in the browser and compares it with the currently
+published `uploads/hashes.json` index. That is an early convenience check, not a
+security boundary: a stale client, interrupted publish, or direct API client can
+still submit the same bytes.
+
+`paper_submissions.sha256` is therefore indexed but deliberately **not unique**.
+Separate students may submit the same bytes, and retaining both durable
+submission records gives moderators an auditable way to decide attribution,
+near-duplicates, and disputes without deleting data. Before clicking **Approve &
+queue**, compare the SHA-256 shown in the moderator detail view with other
+submissions and the published corpus. Mark an exact or semantic repeat as
+**Duplicate**, record `duplicate_of` and `duplicate_type`, and do not queue it.
+The RPC-enforced completion gate means a duplicate, rejected, merely queued, or
+zero-question submission earns no contribution credit and publishes nothing.
+
+The local corpus provides the second idempotency layer: registration resolves an
+existing paper by its full SHA-256 and processing upserts questions by their
+logical `(paper_id, printed number, occurrence)` identity. Retrying the same
+selected submission after a recoverable failure therefore reuses the paper and
+question rows rather than creating colliding IDs. The remote claim RPC also
+serializes a submission so two workers cannot successfully claim that same row.
+
 ## Outputs you should inspect
 
 After processing one paper:
 
 ```
-data/questions/<course>/<year>/<source>/
-    q01.png            canonical question image (200 dpi crop)
-    q01_answer.png     answer-section crop (if short answer found)
-    q01_solution.png   worked-solution crop (if present)
+data/questions/<course>/<year>/<source>/<paper-id>/
+    q01.png                       first question 1 crop (200 dpi)
+    q01--occurrence-2.png         a later question also numbered 1
+    q01_answer.png                first answer-section crop, when found
+    q01--occurrence-2_solution.png  later occurrence's worked solution
 ```
 
-Open a few `qNN.png` files and compare them with the PDF:
+The paper-scoped directory prevents two different PDFs from overwriting one
+another. Within a paper, repeated printed numbers are assigned deterministic
+occurrences in detector order. Occurrence 1 retains the legacy filename and
+ID; later occurrences use `--occurrence-N`. Open a few question PNGs and
+compare them with the PDF:
 - the full question (text + diagram + options) is inside the crop;
 - nothing from the neighbouring question leaks in;
 - multi-page questions (e.g. `q08.png` here) are a single tall image with a
@@ -105,5 +146,12 @@ review queue; clear them with the admin UI (`python -m pipeline serve` →
   `--config` files if needed.
 - Each paper runs in its own transaction; the WAL database tolerates
   long-running batches.
-- Question images are grouped by `<course>/<year>/<source>/` so the tree stays
-  browsable at thousands of questions.
+- Question images are grouped by `<course>/<year>/<source>/<paper-id>/`; this
+  remains browsable while preventing filename collisions across papers.
+- At archive scale, start with one inspected PDF, rerun it to verify the skip,
+  then process a few papers that reuse question numbers. Do not jump directly
+  to the full archive. Use `--limit` for modest batches and inspect review and
+  quality reports between batches.
+- The static search design becomes browser-heavy around 100,000 questions;
+  move search JSON behind an API before targeting a 100,000–300,000 question
+  corpus. See `docs/ARCHITECTURE.md`.
