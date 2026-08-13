@@ -39,7 +39,7 @@ published `uploads/hashes.json` index. That is an early convenience check, not a
 security boundary: a stale client, interrupted publish, or direct API client can
 still submit the same bytes.
 
-`paper_submissions.sha256` is therefore indexed but deliberately **not unique**.
+`upload_submissions.sha256` is therefore indexed but deliberately **not unique**.
 Separate students may submit the same bytes, and retaining both durable
 submission records gives moderators an auditable way to decide attribution,
 near-duplicates, and disputes without deleting data. Before clicking **Approve &
