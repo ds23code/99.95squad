@@ -89,6 +89,59 @@ def test_record_attempt_is_only_write_path():
     assert "record_attempt" in CODE
 
 
+def test_upload_submissions_harden_insert_trigger():
+    """Clients must never choose status/premium/review fields on insert."""
+    assert "create or replace function public.harden_submission_insert" in CODE
+    assert "new.status          := 'pending'" in CODE
+    assert "new.premium_granted := false" in CODE
+    assert "storage_path must be under your own folder" in CODE
+    assert "trg_harden_submission_insert" in CODE
+
+
+def test_moderate_upload_handles_duplicates():
+    """moderate_upload must record duplicate_of/duplicate_type and stay admin-gated."""
+    mod = re.search(r"create or replace function public\.moderate_upload.*?\$\$;", CODE, re.S).group(0)
+    assert "p_duplicate_of text default null" in mod
+    assert "p_duplicate_type text default null" in mod
+    assert "if not public.is_admin() then" in mod
+    assert "duplicate_of = coalesce(nullif(trim(p_duplicate_of), ''), duplicate_of)" in mod
+    assert "duplicate_of = null" in mod  # non-duplicate decisions clear markers
+    # the legacy 3-arg signature must be dropped so only the hardened 5-arg
+    # version remains callable
+    assert "drop function if exists public.moderate_upload(uuid, text, text)" in CODE
+
+
+def test_private_storage_bucket_and_policies():
+    """Uploaded PDFs live in a private bucket; storage RLS is enforced."""
+    assert "insert into storage.buckets" in CODE
+    assert "'paper-uploads'" in CODE
+    assert "false," in CODE  # bucket is NOT public
+    assert 'create policy "paper uploads insert own folder"' in CODE
+    assert "storage.foldername(name))[1] = auth.uid()::text" in CODE
+    assert 'create policy "paper uploads select own or admin"' in CODE
+    assert "owner = auth.uid() or public.is_admin()" in CODE
+
+
+def test_admin_submission_feed_is_admin_only():
+    assert "create or replace function public.admin_list_submissions" in CODE
+    assert "if not public.is_admin() then" in CODE
+    assert "grant execute on function public.admin_list_submissions" in CODE
+    assert "uploader_email" in CODE
+    assert "uploader_name" in CODE
+
+
+def test_admin_rpcs_granted_with_extended_signature():
+    assert re.search(r"grant execute on function public\.approve_upload\(uuid\)", CODE)
+    assert re.search(r"grant execute on function public\.moderate_upload\(uuid, text, text, text, text\)", CODE)
+
+
+def test_attempts_correct_nullable_for_skipped():
+    """Skipped/unattempted questions record correct = NULL."""
+    assert "alter table public.attempts alter column correct drop not null" in CODE
+    # the column is declared nullable in the canonical table definition
+    assert re.search(r"correct\s+boolean,", CODE)
+
+
 def test_no_service_role_key_in_code():
     """The anon key is the only credential; service-role must never appear in
     runnable code (comments are documentation only)."""

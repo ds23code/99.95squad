@@ -230,9 +230,12 @@ The static site includes:
   cannot grant it to themselves.
 - **Contribute a paper** — size + magic-byte + SHA-256 checks, copyright
   acknowledgement, upload quota, pending → approved moderation statuses,
-  14-day premium for approved uploads (server-side).
-- **Admin moderation page** — approve / reject / duplicate / needs-review
-  for reviewers.
+  14-day premium for approved uploads (server-side). With Supabase enabled,
+  the PDF bytes are stored in a **private storage bucket** and moderators
+  preview them through short-lived signed URLs — the bucket is never public.
+- **Admin moderation page** — approve / reject / duplicate / needs-review /
+  needs-changes for reviewers, with PDF preview, uploader identity, file
+  size, duplicate information and a full review-history audit trail.
 
 The pipeline layer also ships a smaller Flask app (`python -m pipeline
 serve`) that reads the database directly — useful as a local admin view and

@@ -466,70 +466,17 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
-
-create or replace function public.limit_pending_uploads()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  pending_count integer;
-begin
-  if new.size_bytes is not null and new.size_bytes > 26214400 then
-    raise exception 'file too large';
-  end if;
-
-  select count(*) into pending_count
-  from public.upload_submissions
-  where uploader = new.uploader
-    and status in ('pending', 'processing');
-
-  if pending_count >= 10 then
-    raise exception 'too many pending uploads';
-  end if;
-
-  return new;
-end;
-$$;
-
-drop trigger if exists trg_limit_pending_uploads on public.upload_submissions;
-create trigger trg_limit_pending_uploads
-  before insert on public.upload_submissions
-  for each row execute procedure public.limit_pending_uploads();
-
-
-create or replace function public.rate_limit_uploads()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  recent_count integer;
-begin
-  select count(*) into recent_count
-  from public.upload_submissions
-  where uploader = new.uploader
-    and created_at > now() - interval '1 hour';
-
-  if recent_count >= 5 then
-    raise exception 'upload rate limit reached';
-  end if;
-
-  return new;
-end;
-$$;
-
-drop trigger if exists trg_rate_limit_uploads on public.upload_submissions;
-create trigger trg_rate_limit_uploads
-  before insert on public.upload_submissions
-  for each row execute procedure public.rate_limit_uploads();
+-- Upload quota/rate-limit triggers are defined at the bottom of this file
+-- (STORAGE / SUBMISSION INSERT HARDENING section).
 
 
 -- ============================================================================
 -- CLIENT RPCs
 -- ============================================================================
+
+-- The moderation RPC gained duplicate_of/duplicate_type parameters; the old
+-- 3-arg signature is removed so only the hardened version remains callable.
+drop function if exists public.moderate_upload(uuid, text, text);
 
 create or replace function public.update_my_profile(
   new_display_name text default null,
@@ -1213,7 +1160,9 @@ begin
       status = 'approved',
       premium_granted = true,
       reviewed_at = now(),
-      reviewed_by = auth.uid()
+      reviewed_by = auth.uid(),
+      duplicate_of = null,
+      duplicate_type = null
     where id = submission_id;
 
     if sub.uploader is not null then
@@ -1249,7 +1198,9 @@ $$;
 create or replace function public.moderate_upload(
   submission_id uuid,
   new_status text,
-  p_notes text default null
+  p_notes text default null,
+  p_duplicate_of text default null,
+  p_duplicate_type text default null
 )
 returns public.upload_submissions
 language plpgsql
@@ -1290,13 +1241,30 @@ begin
     return public.approve_upload(submission_id);
   end if;
 
-  update public.upload_submissions
-  set
-    status = new_status,
-    reviewed_at = now(),
-    reviewed_by = auth.uid(),
-    note = coalesce(p_notes, note)
-  where id = submission_id;
+  if new_status = 'duplicate' then
+    -- record what this submission duplicates (paper id / submission id) and
+    -- how we know (exact hash, near-duplicate, already published, …)
+    update public.upload_submissions
+    set
+      status = 'duplicate',
+      reviewed_at = now(),
+      reviewed_by = auth.uid(),
+      note = coalesce(p_notes, note),
+      duplicate_of = coalesce(nullif(trim(p_duplicate_of), ''), duplicate_of),
+      duplicate_type = coalesce(nullif(trim(p_duplicate_type), ''), duplicate_type)
+    where id = submission_id;
+  else
+    -- any non-duplicate decision clears duplicate markers
+    update public.upload_submissions
+    set
+      status = new_status,
+      reviewed_at = now(),
+      reviewed_by = auth.uid(),
+      note = coalesce(p_notes, note),
+      duplicate_of = null,
+      duplicate_type = null
+    where id = submission_id;
+  end if;
 
   insert into public.audit_events (actor, action, target_id, previous_status, new_status, notes)
   values (
@@ -1305,7 +1273,11 @@ begin
     submission_id::text,
     prev,
     new_status,
-    p_notes
+    coalesce(p_notes, '')
+      || case when new_status = 'duplicate' and p_duplicate_of is not null
+              then ' [duplicate_of=' || p_duplicate_of
+                   || coalesce(' type=' || p_duplicate_type, '') || ']'
+              else '' end
   );
 
   select * into sub from public.upload_submissions where id = submission_id;
@@ -1523,11 +1495,228 @@ to authenticated;
 grant execute on function public.approve_upload(uuid)
 to authenticated;
 
-grant execute on function public.moderate_upload(uuid, text, text)
+grant execute on function public.moderate_upload(uuid, text, text, text, text)
+to authenticated;
+
+grant execute on function public.admin_list_submissions()
 to authenticated;
 
 grant execute on function public.is_admin()
 to authenticated;
+
+
+-- ============================================================================
+-- STORAGE (uploaded paper PDFs)
+-- ============================================================================
+-- Student uploads are stored in a PRIVATE Supabase Storage bucket. The PDF
+-- bytes are never written to a public path and never served unauthenticated.
+-- Admins (and only the owner, for their own files) obtain short-lived signed
+-- URLs through the Storage API — see assets/js/auth.js.
+--
+-- NOTE: this section must run in the SQL editor (or a migration) as a role
+-- that can write to the storage schema (postgres / supabase_admin). The
+-- frontend never touches storage.buckets.
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'paper-uploads',
+  'paper-uploads',
+  false,
+  26214400,                                  -- 25 MB, mirrors QB_CONFIG.upload.maxBytes
+  array['application/pdf']
+)
+on conflict (id) do nothing;
+
+-- uploads: authenticated users may create objects ONLY under their own
+-- folder ({auth.uid()}/...) — nobody can write into another user's folder.
+drop policy if exists "paper uploads insert own folder" on storage.objects;
+create policy "paper uploads insert own folder"
+on storage.objects
+for insert to authenticated
+with check (
+  bucket_id = 'paper-uploads'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- reads: the object owner (their own file) or an admin. This is what gates
+-- signed-URL creation: the Storage API refuses to sign objects the caller
+-- cannot SELECT. Students can never enumerate or read other students' PDFs.
+drop policy if exists "paper uploads select own or admin" on storage.objects;
+create policy "paper uploads select own or admin"
+on storage.objects
+for select to authenticated
+using (
+  bucket_id = 'paper-uploads'
+  and (owner = auth.uid() or public.is_admin())
+);
+
+-- deletes: owners may remove their own uploads; admins may remove any
+-- (copyright takedowns etc.).
+drop policy if exists "paper uploads delete own or admin" on storage.objects;
+create policy "paper uploads delete own or admin"
+on storage.objects
+for delete to authenticated
+using (
+  bucket_id = 'paper-uploads'
+  and (owner = auth.uid() or public.is_admin())
+);
+
+
+-- ============================================================================
+-- SUBMISSION INSERT HARDENING
+-- ============================================================================
+-- Clients may insert submission rows, but they must never choose the status,
+-- grant themselves premium, pick a reviewed_by, or reference a storage path
+-- outside their own folder. All of that is forced here, server-side.
+
+create or replace function public.harden_submission_insert()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.uploader        := auth.uid();
+  new.status          := 'pending';
+  new.premium_granted := false;
+  new.reviewed_at     := null;
+  new.reviewed_by     := null;
+  new.duplicate_of    := null;
+  new.duplicate_type  := null;
+  if new.note is null then
+    new.note := 'Pending review';
+  end if;
+
+  if new.storage_path is not null then
+    if left(new.storage_path, length(auth.uid()::text) + 1) <> (auth.uid()::text || '/') then
+      raise exception 'storage_path must be under your own folder';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_harden_submission_insert on public.upload_submissions;
+create trigger trg_harden_submission_insert
+  before insert on public.upload_submissions
+  for each row execute procedure public.harden_submission_insert();
+
+-- The quota/rate-limit triggers must count against the *authenticated* user
+-- even if the client omitted/forged uploader on the new row.
+create or replace function public.limit_pending_uploads()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  pending_count integer;
+begin
+  if new.size_bytes is not null and new.size_bytes > 26214400 then
+    raise exception 'file too large';
+  end if;
+
+  select count(*) into pending_count
+  from public.upload_submissions
+  where uploader = coalesce(new.uploader, auth.uid())
+    and status in ('pending', 'processing');
+
+  if pending_count >= 10 then
+    raise exception 'too many pending uploads';
+  end if;
+
+  return new;
+end;
+$$;
+
+create or replace function public.rate_limit_uploads()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  recent_count integer;
+begin
+  select count(*) into recent_count
+  from public.upload_submissions
+  where uploader = coalesce(new.uploader, auth.uid())
+    and created_at > now() - interval '1 hour';
+
+  if recent_count >= 5 then
+    raise exception 'upload rate limit reached';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_limit_pending_uploads on public.upload_submissions;
+create trigger trg_limit_pending_uploads
+  before insert on public.upload_submissions
+  for each row execute procedure public.limit_pending_uploads();
+
+drop trigger if exists trg_rate_limit_uploads on public.upload_submissions;
+create trigger trg_rate_limit_uploads
+  before insert on public.upload_submissions
+  for each row execute procedure public.rate_limit_uploads();
+
+
+-- ============================================================================
+-- ADMIN SUBMISSION FEED (enriched for moderation UI)
+-- ============================================================================
+-- Admins see every submission joined with the uploader's profile. RLS on
+-- upload_submissions already lets admins select all rows, but uploader
+-- email/name live in profiles, which ordinary RLS hides from everyone but
+-- the owner. This SECURITY DEFINER view is the admin-only escape hatch.
+
+create or replace function public.admin_list_submissions()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  result jsonb;
+begin
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+
+  select coalesce(jsonb_agg(row_to_json(t) order by t.created_at desc), '[]'::jsonb)
+  into result
+  from (
+    select
+      s.id,
+      s.uploader,
+      s.filename,
+      s.name,
+      s.sha256,
+      s.size_bytes,
+      s.status,
+      s.note,
+      s.premium_granted,
+      s.reviewed_at,
+      s.reviewed_by,
+      s.duplicate_of,
+      s.duplicate_type,
+      s.subject,
+      s.course,
+      s.year,
+      s.paper_type,
+      s.storage_path,
+      s.created_at,
+      p.email         as uploader_email,
+      p.display_name  as uploader_name
+    from public.upload_submissions s
+    left join public.profiles p on p.id = s.uploader
+  ) t;
+
+  return result;
+end;
+$$;
 
 
 -- ============================================================================
