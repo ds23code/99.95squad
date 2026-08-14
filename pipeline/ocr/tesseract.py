@@ -20,6 +20,8 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from PIL import Image as PILImage
+
 from .base import BaseOCREngine, OCRResult
 
 try:
@@ -56,8 +58,17 @@ class TesseractOCR(BaseOCREngine):
         if pytesseract is None:  # pragma: no cover
             raise RuntimeError("pytesseract is not installed (pip install pytesseract)")
         if isinstance(image, (str, Path)):
-            image = Image.open(image)
+            image = PILImage.open(image)
         lang = kwargs.get("language", self.language)
+
+        # Resize image if it is too large for Tesseract (issue #284).
+        # Tesseract may crash on images with very large height or width.
+        max_dim = 2000
+        if image.width > max_dim or image.height > max_dim:
+            scale = min(max_dim / image.width, max_dim / image.height)
+            new_size = (int(image.width * scale), int(image.height * scale))
+            image = image.resize(new_size, PILImage.LANCZOS)
+
         try:
             data = pytesseract.image_to_data(
                 image, lang=lang, config=self._config(), output_type=pytesseract.Output.DICT

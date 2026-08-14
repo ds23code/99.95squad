@@ -106,7 +106,7 @@ class FilenameParser:
         for course in self.courses:
             alias = _find_alias(tokens, course["aliases"])
             if alias:
-                if best is None or len(alias) > len(best[0]):
+                if best is None or len(alias) > best[0]:
                     best = (len(alias), course["id"], course["subject_id"])
         if best:
             meta["course_id"], meta["subject_id"] = best[1], best[2]
